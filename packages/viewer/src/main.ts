@@ -349,8 +349,24 @@ function tick() {
   renderer.render(scene, camera as THREE.Camera);
 }
 
+/** Debug/deep-link: freeze the fold that produced the current step at t ∈ [0,1]. */
+function showFoldFrozen(t: number): void {
+  if (step < 1) return;
+  const pre = current.states[step - 1]!;
+  const op = current.states[step]!.lastOp;
+  if (!op || op.type !== 'FOLD') return;
+  const pr = planFold(pre, op as FoldOp);
+  if (!('plan' in pr)) return;
+  clearCurrent();
+  const a = buildFoldAnim(pr.plan, thickness());
+  a.setAngle(easeInOut(t) * Math.PI);
+  scene.add(a.object); currentObj = a.object;
+  frameCamera();
+}
+
 resize();
 const hash = new URLSearchParams(location.hash.slice(1));
 if (hash.get('view') === 'persp') { topView = false; $('topView').classList.remove('active'); }
 selectDemo(hash.has('demo') ? Number(hash.get('demo')) : 1, hash.has('step') ? Number(hash.get('step')) : undefined);
+if (hash.has('foldT')) showFoldFrozen(Number(hash.get('foldT')));
 tick();

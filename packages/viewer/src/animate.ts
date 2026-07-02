@@ -19,10 +19,12 @@ export interface FoldAnim {
 export function buildFoldAnim(plan: FoldPlan, thickness: number): FoldAnim {
   const object = new THREE.Group();
   const staticG = new THREE.Group();
+  const lifter = new THREE.Group(); // ramps the moving stack to the correct side (see below)
   const pivot = new THREE.Group();
   const content = new THREE.Group(); // holds world-coord movers, offset so pivot rotates about A
   pivot.add(content);
-  object.add(staticG, pivot);
+  lifter.add(pivot);
+  object.add(staticG, lifter);
 
   const zOf = new Map<string, number>();
   plan.order.forEach((id, i) => zOf.set(id, i));
@@ -43,30 +45,46 @@ export function buildFoldAnim(plan: FoldPlan, thickness: number): FoldAnim {
   let cx = 0;
   let cy = 0;
   let n = 0;
+  let moverZmin = Infinity, moverZmax = -Infinity;
+  let staticZmin = Infinity, staticZmax = -Infinity;
   for (const face of plan.faces) {
     const z = (zOf.get(face.id) ?? 0) * thickness;
     if (plan.moverSet.has(face.id)) {
       addFace(content, face, z);
-      // accumulate mover centroid (of first vertex is enough for a sign test)
       const v = face.srcPoly[0]!;
       cx += v.x.toNumber();
       cy += v.y.toNumber();
       n++;
+      moverZmin = Math.min(moverZmin, z);
+      moverZmax = Math.max(moverZmax, z);
     } else {
       addFace(staticG, face, z);
+      staticZmin = Math.min(staticZmin, z);
+      staticZmax = Math.max(staticZmax, z);
     }
   }
+  if (!isFinite(staticZmax)) { staticZmax = 0; staticZmin = 0; }
 
   // choose rotation sign so a Valley fold lifts UP (+z) first, a Mountain fold behind.
   const wx = (n ? cx / n : A.x) - A.x;
   const wy = (n ? cy / n : A.y) - A.y;
-  const zVelForPositive = ux * wy - uy * wx; // z-component of u × w
-  const upSign = zVelForPositive > 0 ? 1 : -1;
+  const upSign = ux * wy - uy * wx > 0 ? 1 : -1; // z-component of u × w
   const sign = plan.direction === 'V' ? upSign : -upSign;
+
+  // A rigid 180° rotation about the hinge INVERTS the moving stack's z (top→bottom):
+  // a mover at z0 lands at -z0. So we ramp a vertical lift over the fold so the moving
+  // stack settles on the correct side — ABOVE the statics for a valley fold, BELOW for
+  // a mountain — matching the committed post-state the caller snaps to at t = 1.
+  const gap = thickness * 1.5 + 0.004;
+  const lift =
+    plan.direction === 'V'
+      ? staticZmax + moverZmax + gap // lowest mover (-moverZmax) rises above staticZmax
+      : staticZmin - moverZmax - gap; // highest mover (-moverZmin) sinks below staticZmin
 
   const axisVec = new THREE.Vector3(ux, uy, 0);
   const setAngle = (theta: number): void => {
     pivot.quaternion.setFromAxisAngle(axisVec, sign * theta);
+    lifter.position.z = lift * (theta / Math.PI);
   };
   setAngle(0);
 
