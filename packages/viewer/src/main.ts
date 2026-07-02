@@ -75,7 +75,8 @@ let mode: 'ALL' | 'ONE_LAYER' = 'ALL';
 let direction: 'V' | 'M' = 'V';
 let side: 'left' | 'right' = 'left';
 
-const thickness = () => (exploded ? 0.09 : 0.014);
+const FOLD_THICKNESS = 0.014; // folds always animate tight
+const thickness = () => (exploded ? 0.09 : FOLD_THICKNESS);
 const isInteractive = () => current === INTERACTIVE;
 
 // ---- DOM ----
@@ -174,7 +175,7 @@ function goToStep(n: number, allowAnim: boolean) {
     const pr = planFold(pre, op as FoldOp);
     if ('plan' in pr) {
       clearCurrent();
-      const a = buildFoldAnim(pr.plan, thickness());
+      const a = buildFoldAnim(pr.plan, FOLD_THICKNESS);
       scene.add(a.object); currentObj = a.object;
       if (topView) { animRestoreTop = true; topView = false; $('topView').classList.remove('active'); frameCamera(); }
       anim = { obj: a, t0: performance.now(), dur: 700, post };
@@ -366,7 +367,7 @@ function showFoldFrozen(t: number): void {
   const pr = planFold(pre, op as FoldOp);
   if (!('plan' in pr)) return;
   clearCurrent();
-  const a = buildFoldAnim(pr.plan, thickness());
+  const a = buildFoldAnim(pr.plan, FOLD_THICKNESS);
   a.setAngle(easeInOut(t) * Math.PI);
   scene.add(a.object); currentObj = a.object;
   frameCamera();
@@ -375,6 +376,7 @@ function showFoldFrozen(t: number): void {
 resize();
 const hash = new URLSearchParams(location.hash.slice(1));
 if (hash.get('view') === 'persp') { topView = false; $('topView').classList.remove('active'); }
+if (hash.get('explode') === '1') { exploded = true; $('explode').classList.add('active'); }
 selectDemo(hash.has('demo') ? Number(hash.get('demo')) : 1, hash.has('step') ? Number(hash.get('step')) : undefined);
 if (hash.has('foldT')) showFoldFrozen(Number(hash.get('foldT')));
 tick();
