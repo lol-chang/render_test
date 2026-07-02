@@ -8,8 +8,31 @@
  * a pile of loose polygons — especially visible in the exploded view.
  */
 import * as THREE from 'three';
-import type { FoldedState, Face, Vec2 } from '@origami/core';
-import { foldedPoly, faceIsFront, applyIso, signedArea } from '@origami/core';
+import type { FoldedState, Face, Vec2, FaceId } from '@origami/core';
+import { foldedPoly, faceIsFront, applyIso, signedArea, canonicalPolyKey } from '@origami/core';
+
+/**
+ * Assign each face a height by its position WITHIN ITS SPOT (the set of faces that
+ * share the same folded polygon), not by a global index. Faces in different spots
+ * are disjoint in xy, so they all sit at z = 0 and only genuinely-overlapping layers
+ * are separated. This keeps a flat sheet flat (its halves stay coplanar) instead of
+ * stepping them apart — which previously made folds look like they pierced the paper.
+ */
+export function layerZMap(faces: readonly Face[], order: readonly FaceId[], thickness: number): Map<string, number> {
+  const rank = new Map<FaceId, number>();
+  order.forEach((id, i) => rank.set(id, i));
+  const groups = new Map<string, Face[]>();
+  for (const f of faces) {
+    const k = canonicalPolyKey(foldedPoly(f));
+    (groups.get(k) ?? groups.set(k, []).get(k)!).push(f);
+  }
+  const z = new Map<string, number>();
+  for (const g of groups.values()) {
+    g.sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+    g.forEach((f, i) => z.set(f.id, i * thickness));
+  }
+  return z;
+}
 
 export const FRONT_COLOR = 0xd94f5c; // colored paper surface (front)
 export const BACK_COLOR = 0xf3f1ea; // white-ish paper surface (back)
@@ -73,10 +96,7 @@ export function addFace(group: THREE.Group, face: Face, z: number): void {
 }
 
 /** Bridge the two layers joined by a folded crease with a small wall (the fold spine). */
-function addHingeWalls(group: THREE.Group, state: FoldedState, thickness: number): void {
-  const zOf = new Map<string, number>();
-  state.order.forEach((id, i) => zOf.set(id, i * thickness));
-
+function addHingeWalls(group: THREE.Group, state: FoldedState, zOf: Map<string, number>): void {
   for (const e of state.edges.values()) {
     if (e.kind !== 'CREASE') continue;
     const [aId, bId] = e.faces;
@@ -106,26 +126,24 @@ function addHingeWalls(group: THREE.Group, state: FoldedState, thickness: number
 
 export function buildModel(state: FoldedState, opts: BuildOptions): Built {
   const object = new THREE.Group();
-  const zOf = new Map<string, number>();
-  state.order.forEach((id, i) => zOf.set(id, i));
+  const faces = [...state.faces.values()];
+  const zOf = layerZMap(faces, state.order, opts.thickness);
 
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const face of state.faces.values()) {
+  let maxZ = 0;
+  for (const face of faces) {
     for (const p of foldedPoly(face)) {
       const x = p.x.toNumber();
       const y = p.y.toNumber();
       minX = Math.min(minX, x); maxX = Math.max(maxX, x);
       minY = Math.min(minY, y); maxY = Math.max(maxY, y);
     }
-    addFace(object, face, (zOf.get(face.id) ?? 0) * opts.thickness);
+    const z = zOf.get(face.id) ?? 0;
+    maxZ = Math.max(maxZ, z);
+    addFace(object, face, z);
   }
-  addHingeWalls(object, state, opts.thickness);
+  addHingeWalls(object, state, zOf);
 
-  const layers = state.order.length;
-  const center = new THREE.Vector3(
-    (minX + maxX) / 2,
-    (minY + maxY) / 2,
-    (layers * opts.thickness) / 2,
-  );
+  const center = new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2, maxZ / 2);
   return { object, center, extent: Math.max(maxX - minX, maxY - minY) || 1 };
 }

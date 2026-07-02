@@ -9,7 +9,7 @@
  */
 import * as THREE from 'three';
 import type { FoldPlan } from '@origami/core';
-import { addFace } from './build3d.js';
+import { addFace, layerZMap } from './build3d.js';
 
 export interface FoldAnim {
   object: THREE.Group;
@@ -26,8 +26,8 @@ export function buildFoldAnim(plan: FoldPlan, thickness: number): FoldAnim {
   lifter.add(pivot);
   object.add(staticG, lifter);
 
-  const zOf = new Map<string, number>();
-  plan.order.forEach((id, i) => zOf.set(id, i));
+  // per-spot z (movers and statics only stacked where they actually overlap)
+  const zOf = layerZMap(plan.faces, plan.order, thickness);
 
   // hinge point A and unit direction u (in the z = 0 plane)
   const A = { x: plan.axis.a.x.toNumber(), y: plan.axis.a.y.toNumber() };
@@ -48,7 +48,7 @@ export function buildFoldAnim(plan: FoldPlan, thickness: number): FoldAnim {
   let moverZmin = Infinity, moverZmax = -Infinity;
   let staticZmin = Infinity, staticZmax = -Infinity;
   for (const face of plan.faces) {
-    const z = (zOf.get(face.id) ?? 0) * thickness;
+    const z = zOf.get(face.id) ?? 0;
     if (plan.moverSet.has(face.id)) {
       addFace(content, face, z);
       const v = face.srcPoly[0]!;
