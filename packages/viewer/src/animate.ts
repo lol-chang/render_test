@@ -19,12 +19,10 @@ export interface FoldAnim {
 export function buildFoldAnim(plan: FoldPlan, thickness: number): FoldAnim {
   const object = new THREE.Group();
   const staticG = new THREE.Group();
-  const lifter = new THREE.Group(); // ramps the moving stack to the correct side (see below)
   const pivot = new THREE.Group();
-  const content = new THREE.Group(); // holds world-coord movers, offset so pivot rotates about A
+  const content = new THREE.Group(); // holds world-coord movers, offset so pivot rotates about the hinge
   pivot.add(content);
-  lifter.add(pivot);
-  object.add(staticG, lifter);
+  object.add(staticG, pivot);
 
   // per-spot z (movers and statics only stacked where they actually overlap)
   const zOf = layerZMap(plan.faces, plan.order, thickness);
@@ -38,13 +36,8 @@ export function buildFoldAnim(plan: FoldPlan, thickness: number): FoldAnim {
   ux /= ulen;
   uy /= ulen;
 
-  pivot.position.set(A.x, A.y, 0);
-  content.position.set(-A.x, -A.y, 0);
-
   // build faces: movers into the rotating content, statics fixed
-  let cx = 0;
-  let cy = 0;
-  let n = 0;
+  let cx = 0, cy = 0, n = 0;
   let moverZmin = Infinity, moverZmax = -Infinity;
   let staticZmin = Infinity, staticZmax = -Infinity;
   for (const face of plan.faces) {
@@ -52,39 +45,39 @@ export function buildFoldAnim(plan: FoldPlan, thickness: number): FoldAnim {
     if (plan.moverSet.has(face.id)) {
       addFace(content, face, z);
       const v = face.srcPoly[0]!;
-      cx += v.x.toNumber();
-      cy += v.y.toNumber();
-      n++;
-      moverZmin = Math.min(moverZmin, z);
-      moverZmax = Math.max(moverZmax, z);
+      cx += v.x.toNumber(); cy += v.y.toNumber(); n++;
+      moverZmin = Math.min(moverZmin, z); moverZmax = Math.max(moverZmax, z);
     } else {
       addFace(staticG, face, z);
-      staticZmin = Math.min(staticZmin, z);
-      staticZmax = Math.max(staticZmax, z);
+      staticZmin = Math.min(staticZmin, z); staticZmax = Math.max(staticZmax, z);
     }
   }
   if (!isFinite(staticZmax)) { staticZmax = 0; staticZmin = 0; }
 
-  // choose rotation sign so a Valley fold lifts UP (+z) first, a Mountain fold behind.
+  // choose rotation sign so a Valley fold sweeps UP (+z) and over, a Mountain fold down.
   const wx = (n ? cx / n : A.x) - A.x;
   const wy = (n ? cy / n : A.y) - A.y;
   const upSign = ux * wy - uy * wx > 0 ? 1 : -1; // z-component of u × w
   const sign = plan.direction === 'V' ? upSign : -upSign;
 
-  // A rigid 180° rotation about the hinge INVERTS the moving stack's z (top→bottom):
-  // a mover at z0 lands at -z0. So we ramp a vertical lift over the fold so the moving
-  // stack settles on the correct side — ABOVE the statics for a valley fold, BELOW for
-  // a mountain — matching the committed post-state the caller snaps to at t = 1.
-  const gap = thickness * 1.5 + 0.004;
-  const lift =
+  // Rotate about the hinge held at the level the flap should FOLD ONTO — no separate
+  // translation. A rigid 180° rotation about height h maps a mover at z to 2h − z, so
+  // picking h just past the midpoint of the stacks lands every mover ABOVE the statics
+  // (valley) or BELOW (mountain) via pure rotation. Keeping h near the paper means the
+  // hinge stays glued to the crease; the earlier growing "lift" translation is what made
+  // the flap look like it detached and swung 360° around.
+  const gap = thickness * 1.2 + 0.006;
+  const pivotZ =
     plan.direction === 'V'
-      ? staticZmax + moverZmax + gap // lowest mover (-moverZmax) rises above staticZmax
-      : staticZmin - moverZmax - gap; // highest mover (-moverZmin) sinks below staticZmin
+      ? (staticZmax + moverZmax) / 2 + gap
+      : (staticZmin + moverZmin) / 2 - gap;
+
+  pivot.position.set(A.x, A.y, pivotZ);
+  content.position.set(-A.x, -A.y, -pivotZ);
 
   const axisVec = new THREE.Vector3(ux, uy, 0);
   const setAngle = (theta: number): void => {
     pivot.quaternion.setFromAxisAngle(axisVec, sign * theta);
-    lifter.position.z = lift * (theta / Math.PI);
   };
   setAngle(0);
 
