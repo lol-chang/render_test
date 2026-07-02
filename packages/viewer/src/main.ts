@@ -66,7 +66,6 @@ let currentObj: THREE.Object3D | null = null;
 let modelCenter = new THREE.Vector3();
 let modelExtent = 1;
 let anim: { obj: FoldAnim; t0: number; dur: number; post: FoldedState } | null = null;
-let animRestoreTop = false; // was Top view on when this fold started?
 
 // interactive fold selections
 let selectedFace: FaceId | null = null;
@@ -177,7 +176,6 @@ function goToStep(n: number, allowAnim: boolean) {
       clearCurrent();
       const a = buildFoldAnim(pr.plan, FOLD_THICKNESS);
       scene.add(a.object); currentObj = a.object;
-      if (topView) { animRestoreTop = true; topView = false; $('topView').classList.remove('active'); frameCamera(); }
       anim = { obj: a, t0: performance.now(), dur: 700, post };
       info.textContent = `${current.labels[step] ?? ''}\n folding…`;
       stepLabel.textContent = `${step}/${current.states.length - 1}`;
@@ -346,13 +344,7 @@ function tick() {
   if (anim) {
     const t = Math.min(1, (performance.now() - anim.t0) / anim.dur);
     anim.obj.setAngle(easeInOut(t) * Math.PI);
-    if (t >= 1) {
-      const post = anim.post; anim = null;
-      const restore = animRestoreTop;
-      if (restore) { animRestoreTop = false; topView = true; $('topView').classList.add('active'); }
-      showState(post, restore); // if we had flipped out of Top for the fold, reframe back to it
-      rebuildHistory();
-    }
+    if (t >= 1) { const post = anim.post; anim = null; showState(post); rebuildHistory(); }
   }
   controls.update();
   renderer.render(scene, camera as THREE.Camera);
