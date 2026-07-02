@@ -8,8 +8,8 @@ verification core of a research pipeline (diagram → proposed op → engine →
 
 ## Status
 
-The pure, headless correctness core is complete and fully tested (**M0–M4**). The 2D/FOLD-IO
-layer (**M5**) and the three.js viewer (**M6–M7**) are not yet built.
+**Feature-complete (M0–M7).** Exact headless engine + verification core, 2D diagram
+renderer, FOLD interop, and an interactive three.js simulator. 106 core tests green.
 
 | Milestone | What | State |
 |---|---|---|
@@ -18,8 +18,9 @@ layer (**M5**) and the three.js viewer (**M6–M7**) are not yet built.
 | M2 | `FOLD ALL`, `FLIP`, `UNFOLD_LAST`, checker I1–I3 | ✅ |
 | M3 | `FOLD ONE_LAYER` (moving-set closure, P1 tear / P2 extractability) | ✅ |
 | M4 | Full checker I4–I6, `PRECREASE`, crafted-violation goldens | ✅ |
-| M5 | `render2d` SVG projection Π(S), FOLD import/export | ⬜ |
-| M6–M7 | three.js viewer: static build, fold animation, interaction | ⬜ |
+| M5 | `render2d` top-view SVG Π(S), FOLD import/export + round-trip | ✅ |
+| M6 | Viewer static build: z-offsets, front/back materials, ortho top view, history strip | ✅ |
+| M7 | Fold animation + interaction: candidate-axis picking, green/red dry-run preview | ✅ |
 
 ## Guarantees
 
@@ -48,22 +49,60 @@ layer (**M5**) and the three.js viewer (**M6–M7**) are not yet built.
 ## Layout
 
 ```
-packages/core/
-  src/geom/     Rat, Vec2, Line, Iso, Poly, canonical hash   (M0)
-  src/state/    Face, Edge, Spot, FoldedState, serialization (M1)
-  src/ops/      split/CONF, fold ALL, fold ONE_LAYER, flip,
-                precrease, unfold, dispatcher                (M1–M4)
-  src/check/    independent invariant checker I1–I6          (M2, M4)
+packages/core/                 # PURE TypeScript — no three.js, no DOM
+  src/geom/     Rat, Vec2, Line, Iso, Poly, canonical hash        (M0)
+  src/state/    Face, Edge, Spot, FoldedState, serialization      (M1)
+  src/ops/      split/CONF, fold ALL/ONE_LAYER, flip, precrease,
+                unfold, plan (for animation), axis candidates     (M1–M4, M7)
+  src/check/    independent invariant checker I1–I6               (M2, M4)
+  src/render2d/ top-view SVG projection Π(S)                      (M5)
+  src/io/       FOLD-format import/export                         (M5)
   test/         unit + property + crafted-violation + goldens
+packages/viewer/               # three.js + Vite app (depends on core)
+  src/build3d   state → meshes, z-offsets, front/back, hinge walls
+  src/animate   fold animation about the hinge
+  src/main      camera, history strip, picking, interactive fold
 ```
 
 ## Running
 
 ```sh
 npm install
-npm --workspace @origami/core run test        # 72 tests
-npm --workspace @origami/core run typecheck    # strict, no errors
+
+# engine: 106 tests + strict typecheck
+npm --workspace @origami/core run test
+npm --workspace @origami/core run typecheck
+
+# simulator (opens http://localhost:5173)
+npm --workspace @origami/viewer run dev
 ```
+
+## Demo script (the v1 "done" walkthrough)
+
+1. `npm --workspace @origami/viewer run dev` → open http://localhost:5173.
+2. Pick **Half / half again** and press **Next ▶** — watch each layer rotate about the
+   hinge, then snap to the verified state. The panel shows **✅ valid (I1–I6)** live.
+3. Toggle **Explode** to see the layer stack joined by red fold-spines; **Top** gives the
+   orthographic diagram view. Click a **history thumbnail** to time-travel.
+4. Pick **Traditional cup** → **Next** through the diagonal, corner, and ONE_LAYER
+   front-flap fold.
+5. Switch to **🖐 Interactive**: hover a face to read its layer depth; click a face, choose
+   an **axis candidate** + mode/direction/side. The dry-run turns **green** (movers
+   highlighted) when valid and **red** (with the blocking witness) when not — e.g. try to
+   valley-fold a buried layer and see `E_BLOCKED`. Press **Apply fold** to commit.
+
+## Cross-tool check (§9.4)
+
+`toFold(state)` exports the flat-folded state (2D `vertices_coords` + `faces_vertices` +
+`edges_assignment` + `faceOrders`, faces CCW so `faceOrders` `s=+1` ⇔ f above g). Procedure
+to validate our layer order against reference tools:
+
+1. Export a final state: `writeFileSync('model.fold', JSON.stringify(toFold(state)))`.
+2. Load `model.fold` in **Flat-Folder** (origami.dev/flat-folder) or **Origami Simulator**
+   (origamisimulator.org).
+3. Confirm the layer order we produced is among the valid orders they report. `foldStacks`
+   reads their FOLD back into per-region stacks for a direct comparison; the round-trip is
+   covered by `test/render_io.test.ts`.
 
 ### Worked example (Appendix A golden)
 

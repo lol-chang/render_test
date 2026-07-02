@@ -11,30 +11,33 @@
       #app { position: fixed; inset: 0; }
       #canvas { width: 100%; height: 100%; display: block; }
       #panel {
-        position: fixed; top: 12px; left: 12px; width: 280px;
-        background: rgba(20,22,28,0.86); backdrop-filter: blur(8px);
+        position: fixed; top: 12px; left: 12px; width: 300px; max-height: calc(100vh - 140px); overflow-y: auto;
+        background: rgba(20,22,28,0.88); backdrop-filter: blur(8px);
         border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;
         padding: 14px 16px; color: #e6e8ec; font-size: 13px; line-height: 1.5;
       }
-      #panel h1 { font-size: 14px; margin: 0 0 10px; font-weight: 650; letter-spacing: 0.2px; }
-      #panel label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: #9aa1ac; margin: 12px 0 5px; }
+      #panel h1 { font-size: 14px; margin: 0 0 10px; font-weight: 650; }
+      label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: #9aa1ac; margin: 12px 0 5px; }
       select, button { font: inherit; }
-      select {
-        width: 100%; padding: 7px 9px; border-radius: 8px;
-        background: #12151b; color: #e6e8ec; border: 1px solid rgba(255,255,255,0.12);
-      }
+      select { width: 100%; padding: 7px 9px; border-radius: 8px; background: #12151b; color: #e6e8ec; border: 1px solid rgba(255,255,255,0.12); }
       .row { display: flex; align-items: center; gap: 8px; }
       .row input[type=range] { flex: 1; }
-      button {
-        padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12);
-        background: #1b2430; color: #e6e8ec; cursor: pointer;
-      }
+      button { padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: #1b2430; color: #e6e8ec; cursor: pointer; }
       button:hover { background: #24303f; }
       button.active { background: #2d6cdf; border-color: #2d6cdf; }
+      button:disabled { opacity: 0.4; cursor: not-allowed; }
       #stepLabel { font-variant-numeric: tabular-nums; color: #cbd2dc; }
       #info { margin-top: 12px; font-size: 12px; color: #aab2be; white-space: pre-line; }
       .btnrow { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
-      .hint { position: fixed; bottom: 12px; left: 12px; color: #6b7280; font-size: 11px; }
+      .hint { position: fixed; bottom: 96px; left: 12px; color: #6b7280; font-size: 11px; }
+      #foldui { margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.08); display: none; }
+      #foldui.on { display: block; }
+      #foldstatus { margin-top: 8px; font-size: 12px; white-space: pre-line; min-height: 32px; }
+      .ok { color: #4ade80; } .bad { color: #f87171; }
+      #history { position: fixed; bottom: 10px; left: 12px; right: 12px; height: 74px; display: flex; gap: 6px; overflow-x: auto; padding: 4px; }
+      #history .thumb { height: 64px; width: 64px; flex: 0 0 auto; border-radius: 8px; border: 2px solid transparent; background: #fff; cursor: pointer; }
+      #history .thumb.active { border-color: #2d6cdf; }
+      .apply { background: #2d6cdf; border-color: #2d6cdf; width: 100%; margin-top: 8px; }
     </style>
   </head>
   <body>
@@ -52,12 +55,32 @@
       <div class="btnrow">
         <button id="prev">◀ Prev</button>
         <button id="next">Next ▶</button>
-        <button id="topView" class="active">Top view</button>
+        <button id="topView" class="active">Top</button>
         <button id="explode">Explode</button>
       </div>
       <div id="info"></div>
+
+      <div id="foldui">
+        <label>Interactive fold — click a face, pick an axis</label>
+        <div id="selinfo" style="font-size:12px;color:#aab2be">no face selected</div>
+        <label for="axis">Axis candidate</label>
+        <select id="axis"></select>
+        <div class="btnrow">
+          <button id="mAll" class="active">All layers</button>
+          <button id="mOne">One layer</button>
+        </div>
+        <div class="btnrow">
+          <button id="dV" class="active">Valley</button>
+          <button id="dM">Mountain</button>
+          <button id="sL" class="active">Left moves</button>
+          <button id="sR">Right moves</button>
+        </div>
+        <div id="foldstatus"></div>
+        <button id="apply" class="apply" disabled>Apply fold</button>
+      </div>
     </div>
-    <div class="hint">drag = orbit · scroll = zoom · right-drag = pan</div>
+    <div class="hint">drag = orbit · scroll = zoom · hover a face to inspect its stack</div>
+    <div id="history"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
