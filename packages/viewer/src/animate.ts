@@ -9,6 +9,7 @@
  */
 import * as THREE from 'three';
 import type { FoldPlan } from '@origami/core';
+import { foldedPoly } from '@origami/core';
 import { addFace, layerZMap } from './build3d.js';
 
 export interface FoldAnim {
@@ -44,8 +45,12 @@ export function buildFoldAnim(plan: FoldPlan, thickness: number): FoldAnim {
     const z = zOf.get(face.id) ?? 0;
     if (plan.moverSet.has(face.id)) {
       addFace(content, face, z);
-      const v = face.srcPoly[0]!;
-      cx += v.x.toNumber(); cy += v.y.toNumber(); n++;
+      // side test must use the FOLDED centroid (the axis lives in folded space), not
+      // the source polygon — post-fold movers carry a non-identity transform.
+      const fp = foldedPoly(face);
+      let fx = 0, fy = 0;
+      for (const p of fp) { fx += p.x.toNumber(); fy += p.y.toNumber(); }
+      cx += fx / fp.length; cy += fy / fp.length; n++;
       moverZmin = Math.min(moverZmin, z); moverZmax = Math.max(moverZmax, z);
     } else {
       addFace(staticG, face, z);
