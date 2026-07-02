@@ -9,10 +9,10 @@
  */
 import * as THREE from 'three';
 import type { FoldedState, Face, Vec2 } from '@origami/core';
-import { foldedPoly, faceIsFront, applyIso } from '@origami/core';
+import { foldedPoly, faceIsFront, applyIso, signedArea } from '@origami/core';
 
-export const FRONT_COLOR = 0xd94f5c; // colored side (classic origami front)
-export const BACK_COLOR = 0xf3f1ea; // white-ish back
+export const FRONT_COLOR = 0xd94f5c; // colored paper surface (front)
+export const BACK_COLOR = 0xf3f1ea; // white-ish paper surface (back)
 const EDGE_COLOR = 0x2b2f36;
 const HINGE_COLOR = 0xc94c58; // fold spine
 
@@ -30,29 +30,40 @@ function toXY(p: Vec2): { x: number; y: number } {
   return { x: p.x.toNumber(), y: p.y.toNumber() };
 }
 
-/** Add a single face (fill + outline) to a group at height z. Returns nothing. */
+function paperMat(color: number, sideMode: THREE.Side): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({
+    color, roughness: 0.82, metalness: 0.0, side: sideMode,
+    polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+  });
+}
+
+/**
+ * Add a face at height z, rendered with DISTINCT front (red) and back (white) paper
+ * surfaces. The geometry is wound CCW (normal +z), and the paper's front surface faces
+ * +z iff the face is front-up (det>0). So as a flap rotates past vertical during a
+ * fold, the camera starts seeing the other surface — the paper visibly flips red↔white,
+ * both in the animation and at rest.
+ */
 export function addFace(group: THREE.Group, face: Face, z: number): void {
-  const poly = foldedPoly(face).map(toXY);
+  let poly = foldedPoly(face);
+  if (signedArea(poly).sign() < 0) poly = [...poly].reverse(); // ensure CCW ⇒ normal +z
+  const xy = poly.map(toXY);
   const shape = new THREE.Shape();
-  shape.moveTo(poly[0]!.x, poly[0]!.y);
-  for (let i = 1; i < poly.length; i++) shape.lineTo(poly[i]!.x, poly[i]!.y);
+  shape.moveTo(xy[0]!.x, xy[0]!.y);
+  for (let i = 1; i < xy.length; i++) shape.lineTo(xy[i]!.x, xy[i]!.y);
   shape.closePath();
 
   const geo = new THREE.ShapeGeometry(shape);
   geo.translate(0, 0, z);
-  const front = faceIsFront(face);
-  const mat = new THREE.MeshStandardMaterial({
-    color: front ? FRONT_COLOR : BACK_COLOR,
-    roughness: 0.82,
-    metalness: 0.0,
-    side: THREE.DoubleSide,
-    polygonOffset: true,
-    polygonOffsetFactor: 1,
-    polygonOffsetUnits: 1,
-  });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.userData.faceId = face.id;
-  group.add(mesh);
+  const frontUp = faceIsFront(face);
+  const plusZColor = frontUp ? FRONT_COLOR : BACK_COLOR; // surface facing +z (camera)
+  const minusZColor = frontUp ? BACK_COLOR : FRONT_COLOR;
+
+  const top = new THREE.Mesh(geo, paperMat(plusZColor, THREE.FrontSide));
+  const bot = new THREE.Mesh(geo, paperMat(minusZColor, THREE.BackSide));
+  top.userData.faceId = face.id;
+  bot.userData.faceId = face.id;
+  group.add(top, bot);
 
   const line = new THREE.LineSegments(
     new THREE.EdgesGeometry(geo, 1),
