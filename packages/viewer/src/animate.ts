@@ -65,17 +65,15 @@ export function buildFoldAnim(plan: FoldPlan, thickness: number): FoldAnim {
   const upSign = ux * wy - uy * wx > 0 ? 1 : -1; // z-component of u × w
   const sign = plan.direction === 'V' ? upSign : -upSign;
 
-  // Rotate about the hinge held at the level the flap should FOLD ONTO — no separate
-  // translation. A rigid 180° rotation about height h maps a mover at z to 2h − z, so
-  // picking h just past the midpoint of the stacks lands every mover ABOVE the statics
-  // (valley) or BELOW (mountain) via pure rotation. Keeping h near the paper means the
-  // hinge stays glued to the crease; the earlier growing "lift" translation is what made
-  // the flap look like it detached and swung 360° around.
-  const gap = thickness * 1.2 + 0.006;
-  const pivotZ =
-    plan.direction === 'V'
-      ? (staticZmax + moverZmax) / 2 + gap
-      : (staticZmin + moverZmin) / 2 - gap;
+  // Rotate about the hinge held at the MOVING stack's own level, so the crease stays
+  // glued to the paper (it does NOT lift off) — the fold reads as continuous origami.
+  // A rigid flap rotated 180° about a line in (near) its own plane lands back at that
+  // level on the other side, so a top flap lands on top of the lower statics; the exact
+  // final layer order is finalized by the snap to the committed post-state at t = 1.
+  // (Perfect "attached AND exact landing" is impossible for a zero-thickness rigid
+  // rotation, so we favor the attached look and let the snap fix the ordering.)
+  void staticZmin; void staticZmax;
+  const pivotZ = (moverZmin + moverZmax) / 2;
 
   pivot.position.set(A.x, A.y, pivotZ);
   content.position.set(-A.x, -A.y, -pivotZ);
