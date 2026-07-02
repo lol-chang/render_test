@@ -12,7 +12,7 @@ import { FaceId } from '../state/ids.js';
 import { FoldedState, buildState } from '../state/state.js';
 import { splitAtAxis, renormalizeToCONF } from './split.js';
 import { checkState } from '../check/checker.js';
-import { FoldOp, MovingSide, Result, ok, err } from './types.js';
+import { FoldOp, MovingSide, OpError, Result, ok, err } from './types.js';
 
 /** Directed-axis side that a movingSide label selects: left = +1, right = -1. */
 export function sideSign(side: MovingSide): 1 | -1 {
@@ -149,23 +149,63 @@ export function commitFold(args: {
   return ok(next, report);
 }
 
-export function foldAll(state: FoldedState, op: FoldOp): Result {
+/**
+ * A fold "plan": the split pre-state faces, the moving set, and the folded-space
+ * hinge — everything needed to APPLY the fold, and equally everything the viewer
+ * needs to ANIMATE it (§8.2). Produced without committing, so it doubles as a
+ * dry-run.
+ */
+export interface FoldPlan {
+  readonly axis: Line;
+  readonly faces: Face[]; // split pre-state faces (movers + statics)
+  readonly order: FaceId[];
+  readonly moverSet: Set<FaceId>;
+  readonly direction: Assignment;
+}
+
+export type PlanResult = { plan: FoldPlan } | { error: OpError };
+
+/** Plan a FOLD ALL: split at axis, movers = faces strictly on the moving side. */
+export function planFoldAll(state: FoldedState, op: FoldOp): PlanResult {
   let axis: Line;
   try {
     axis = lineThrough(op.axis.a, op.axis.b);
   } catch {
-    return err({ code: 'E_AXIS_DEGENERATE' });
+    return { error: { code: 'E_AXIS_DEGENERATE' } };
   }
-
   const split = splitAtAxis([...state.faces.values()], [...state.order], axis);
   const { faces, order } = split;
-
   const target = sideSign(op.movingSide);
   const moverSet = new Set<FaceId>();
   for (const f of faces) if (faceSide(f, axis) === target) moverSet.add(f.id);
-  if (moverSet.size === 0) return err({ code: 'E_EMPTY_MOVE' });
-  if (moverSet.size === faces.length) return err({ code: 'E_EMPTY_MOVE' }); // no static hinge
+  if (moverSet.size === 0) return { error: { code: 'E_EMPTY_MOVE' } };
+  if (moverSet.size === faces.length) return { error: { code: 'E_EMPTY_MOVE' } }; // no hinge
+  return { plan: { axis, faces, order, moverSet, direction: op.direction } };
+}
 
-  const creases = recordHingeCreases(faces, moverSet, axis, op.direction, state.creases);
-  return commitFold({ state, faces, order, axis, moverSet, direction: op.direction, creases, op });
+/** Apply a plan: record hinge creases, then reflect / reorder / CONF / check. */
+export function commitPlan(state: FoldedState, plan: FoldPlan, op: FoldOp): Result {
+  const creases = recordHingeCreases(
+    plan.faces,
+    plan.moverSet,
+    plan.axis,
+    plan.direction,
+    state.creases,
+  );
+  return commitFold({
+    state,
+    faces: plan.faces,
+    order: plan.order,
+    axis: plan.axis,
+    moverSet: plan.moverSet,
+    direction: plan.direction,
+    creases,
+    op,
+  });
+}
+
+export function foldAll(state: FoldedState, op: FoldOp): Result {
+  const r = planFoldAll(state, op);
+  if ('error' in r) return err(r.error);
+  return commitPlan(state, r.plan, op);
 }

@@ -22,8 +22,8 @@ import { FaceId, EdgeId, asEdgeId, SpotId } from '../state/ids.js';
 import { segKey } from '../state/edge.js';
 import { FoldedState, rebuildSpots, Spot } from '../state/state.js';
 import { splitAtAxis } from './split.js';
-import { FoldOp, Result, ok, err } from './types.js';
-import { sideSign, faceSide, recordHingeCreases, commitFold } from './fold.js';
+import { FoldOp, Result, err } from './types.js';
+import { sideSign, faceSide, commitPlan, PlanResult } from './fold.js';
 
 interface Adjacency {
   readonly neighbor: FaceId;
@@ -84,12 +84,16 @@ function edgeIdFor(a: FaceId, b: FaceId, seg: readonly [Vec2, Vec2]): EdgeId {
   return asEdgeId(`${lo}~${hi}|${segKey(seg[0], seg[1])}`);
 }
 
-export function foldOneLayer(state: FoldedState, op: FoldOp): Result {
+/**
+ * Plan a FOLD ONE_LAYER (seeds → closure → P1 → P2) without committing, so the
+ * viewer can animate the exact moving set the engine would fold (§8.2).
+ */
+export function planOneLayer(state: FoldedState, op: FoldOp): PlanResult {
   let axis: Line;
   try {
     axis = lineThrough(op.axis.a, op.axis.b);
   } catch {
-    return err({ code: 'E_AXIS_DEGENERATE' });
+    return { error: { code: 'E_AXIS_DEGENERATE' } };
   }
 
   // 1. split-at-axis
@@ -108,14 +112,14 @@ export function foldOneLayer(state: FoldedState, op: FoldOp): Result {
         if (f.id === seed || f.id.startsWith(`${seed}:`)) M.add(f.id);
       }
     }
-    if (M.size === 0) return err({ code: 'E_EMPTY_MOVE' });
+    if (M.size === 0) return { error: { code: 'E_EMPTY_MOVE' } };
   } else {
     for (const spot of spots.values()) {
       if (!spotSeedsHinge(spot, axis, target)) continue;
       const seed = op.direction === 'V' ? spot.stack[spot.stack.length - 1]! : spot.stack[0]!;
       M.add(seed);
     }
-    if (M.size === 0) return err({ code: 'E_EMPTY_MOVE' });
+    if (M.size === 0) return { error: { code: 'E_EMPTY_MOVE' } };
   }
 
   // 3. closure: pull in faces connected through a non-axis edge (would tear otherwise)
@@ -132,7 +136,7 @@ export function foldOneLayer(state: FoldedState, op: FoldOp): Result {
 
   // 4. P1 — no tearing / hinge anchoring
   const complementEmpty = M.size === faces.length;
-  if (complementEmpty) return err({ code: 'E_TEAR', edges: [] });
+  if (complementEmpty) return { error: { code: 'E_TEAR', edges: [] } };
 
   const tearEdges: EdgeId[] = [];
   // (a) every M↔complement shared edge must be on the axis
@@ -154,7 +158,7 @@ export function foldOneLayer(state: FoldedState, op: FoldOp): Result {
       if (tearEdges.length === 0) tearEdges.push(asEdgeId(`mis-sided:${id}`));
     }
   }
-  if (tearEdges.length > 0) return err({ code: 'E_TEAR', edges: tearEdges });
+  if (tearEdges.length > 0) return { error: { code: 'E_TEAR', edges: tearEdges } };
 
   // 5. P2 — extractability. In every spot with both a mover and a static, movers must
   //    be above (V) / below (M) every static, so the flap can lift off cleanly.
@@ -184,15 +188,15 @@ export function foldOneLayer(state: FoldedState, op: FoldOp): Result {
         }
         if (mover) break;
       }
-      return err({
-        code: 'E_BLOCKED',
-        spot: spot.id as SpotId,
-        pair: [mover!, stat!],
-      });
+      return { error: { code: 'E_BLOCKED', spot: spot.id as SpotId, pair: [mover!, stat!] } };
     }
   }
 
-  // 6. apply (identical to ALL): record creases, reflect, layer update, CONF, check
-  const creases = recordHingeCreases(faces, M, axis, op.direction, state.creases);
-  return commitFold({ state, faces, order, axis, moverSet: M, direction: op.direction, creases, op });
+  return { plan: { axis, faces, order, moverSet: M, direction: op.direction } };
+}
+
+export function foldOneLayer(state: FoldedState, op: FoldOp): Result {
+  const r = planOneLayer(state, op);
+  if ('error' in r) return err(r.error);
+  return commitPlan(state, r.plan, op);
 }
