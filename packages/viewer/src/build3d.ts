@@ -17,7 +17,7 @@
  *   4. Edge lines: BOUNDARY + folded CREASE only. SPLIT edges are never drawn. No hinge walls.
  */
 import * as THREE from 'three';
-import type { FoldedState, Face, Vec2, FaceId } from '@origami/core';
+import type { FoldedState, Face, Vec2, FaceId, SpotId } from '@origami/core';
 import { foldedPoly, faceIsFront, applyIso } from '@origami/core';
 
 export const FRONT_COLOR = 0xd94f5c; // colored paper front
@@ -68,6 +68,22 @@ function makeUF(ids: Iterable<FaceId>) {
 }
 
 interface FaceGeom { face: Face; verts: Vec2[]; z: number[] } // enriched folded polygon + per-vertex z
+
+/** Least-squares non-decreasing projection (pool adjacent violators). Minimal monotone fit. */
+function isotonic(vals: number[]): number[] {
+  const blocks: { sum: number; cnt: number; val: number }[] = [];
+  for (const v of vals) {
+    let b = { sum: v, cnt: 1, val: v };
+    while (blocks.length && blocks[blocks.length - 1]!.val > b.val) {
+      const p = blocks.pop()!;
+      b = { sum: p.sum + b.sum, cnt: p.cnt + b.cnt, val: (p.sum + b.sum) / (p.cnt + b.cnt) };
+    }
+    blocks.push(b);
+  }
+  const out: number[] = [];
+  for (const b of blocks) for (let i = 0; i < b.cnt; i++) out.push(b.val);
+  return out;
+}
 
 export function buildModel(state: FoldedState, opts: BuildOptions): Built {
   const eps = opts.epsilon, w = opts.weight;
@@ -149,6 +165,30 @@ export function buildModel(state: FoldedState, opts: BuildOptions): Built {
     };
     weld(['SPLIT'], false);            // tier 1: unconditional
     weld(['SPLIT', 'CREASE'], true);   // tier 2: hinge clusters, w-blended
+  }
+
+  // 2b. Order repair (SPEC-GAP §8.1): the mean-weld can pull a facet's boundary height out
+  // of its spot's stacking order — a top facet draping toward a low far region dips below a
+  // non-draping layer beneath it ("top ends up in the middle and pokes through"). At each
+  // vertex, project each spot's faces (by stack index) onto the nearest NON-DECREASING
+  // sequence (isotonic / PAVA). Minimal: invisible at the Paper preset, and at large ε it
+  // ties the crossing layers instead of letting the top poke below. (Cup: 3 inversions → 0.)
+  const faceSpotId = new Map<FaceId, SpotId>();
+  for (const [sid, sp] of state.spots) for (const id of sp.stack) faceSpotId.set(id, sid);
+  for (const insts of instances.values()) {
+    if (insts.length < 2) continue;
+    const bySpot = new Map<SpotId, { id: FaceId; vi: number }[]>();
+    for (const i of insts) {
+      const sid = faceSpotId.get(i.id); if (sid === undefined) continue;
+      (bySpot.get(sid) ?? bySpot.set(sid, []).get(sid)!).push(i);
+    }
+    for (const [sid, group] of bySpot) {
+      if (group.length < 2) continue;
+      const stack = state.spots.get(sid)!.stack;
+      group.sort((p, q) => stack.indexOf(p.id) - stack.indexOf(q.id)); // bottom→top
+      const fixed = isotonic(group.map((i) => fg.get(i.id)!.z[i.vi]!));
+      group.forEach((i, j) => { fg.get(i.id)!.z[i.vi] = fixed[j]!; });
+    }
   }
 
   // 4. build meshes + edge lines
