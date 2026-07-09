@@ -27,6 +27,11 @@ const LINE_COLOR = 0x2b2f36;         // boundary + folded crease overlay
 export interface BuildOptions {
   epsilon: number; // "paper thickness" — per-layer z gap
   weight: number;  // fold tightness w ∈ [0,1]; 0 = flat plates, 1 = welded
+  // Explode = layer-order pedagogy (§8.1 item 5): "multiplying gaps" ⇒ separate the layers.
+  // With weld off, every face is a flat plate at its stack height, so the topmost layer is
+  // unambiguously on top and no welded ramp bends a top facet down into the middle. The
+  // Paper preset keeps welding (continuous paper at tiny ε).
+  weld?: boolean;  // default true
 }
 export interface Built {
   object: THREE.Group;
@@ -142,8 +147,8 @@ export function buildModel(state: FoldedState, opts: BuildOptions): Built {
     }
   }
 
-  // 2. two-tier weld at each position
-  for (const [k, insts] of instances) {
+  // 2. two-tier weld at each position (skipped in the Explode pedagogy view → flat plates)
+  if (opts.weld ?? true) for (const [k, insts] of instances) {
     if (insts.length < 2 && !(adj.SPLIT.get(k) || adj.CREASE.get(k))) continue;
     const here = new Set(insts.map((i) => i.id));
     const viAt = new Map<FaceId, number>(insts.map((i) => [i.id, i.vi]));
@@ -227,19 +232,26 @@ function addFaceSurface(group: THREE.Group, g: FaceGeom, box: THREE.Box3, tmp: T
 /** Draw BOUNDARY + folded CREASE edges only (never SPLIT), at the welded height. */
 function addEdgeLines(group: THREE.Group, state: FoldedState, fg: Map<FaceId, FaceGeom>): void {
   const pts: number[] = [];
-  const zAtPos = (id: FaceId, k: string): number | null => {
-    const g = fg.get(id); if (!g) return null;
-    for (let i = 0; i < g.verts.length; i++) if (keyOf(g.verts[i]!) === k) return g.z[i]!;
-    return null;
+  // z of face `id` at folded point p: exact-key hit, else the nearest enriched vertex's z
+  // (robust — a `?? 0` fallback made near-vertical spikes at sub-segment edge endpoints).
+  const zAt = (id: FaceId, p: Vec2, np: { x: number; y: number }): number => {
+    const g = fg.get(id); if (!g) return 0;
+    const k = keyOf(p);
+    let bestZ = 0, bd = Infinity;
+    for (let i = 0; i < g.verts.length; i++) {
+      if (keyOf(g.verts[i]!) === k) return g.z[i]!;
+      const d = (g.verts[i]!.x.toNumber() - np.x) ** 2 + (g.verts[i]!.y.toNumber() - np.y) ** 2;
+      if (d < bd) { bd = d; bestZ = g.z[i]!; }
+    }
+    return bestZ;
   };
   for (const e of state.edges.values()) {
     if (e.kind !== 'BOUNDARY' && e.kind !== 'CREASE') continue; // SPLIT never drawn
     const f = state.faces.get(e.faces[0]);
     if (!f) continue;
     const p = applyIso(f.T, e.srcSeg[0]), q = applyIso(f.T, e.srcSeg[1]);
-    const zp = zAtPos(f.id, keyOf(p)) ?? 0, zq = zAtPos(f.id, keyOf(q)) ?? 0;
     const np = numOf(p), nq = numOf(q);
-    pts.push(np.x, np.y, zp + 1e-4, nq.x, nq.y, zq + 1e-4);
+    pts.push(np.x, np.y, zAt(f.id, p, np) + 1e-4, nq.x, nq.y, zAt(f.id, q, nq) + 1e-4);
   }
   if (!pts.length) return;
   const geo = new THREE.BufferGeometry();

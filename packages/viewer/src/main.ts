@@ -109,7 +109,7 @@ function clearCurrent() { if (currentObj) { scene.remove(currentObj); disposeObj
 
 function showState(state: FoldedState, reframe = false) {
   clearCurrent();
-  const built = buildModel(state, { epsilon: epsFor(), weight });
+  const built = buildModel(state, { epsilon: epsFor(), weight, weld: !exploded });
   scene.add(built.object);
   currentObj = built.object;
   modelCenter = built.center; modelExtent = built.extent;
