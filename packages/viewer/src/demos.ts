@@ -64,5 +64,16 @@ export function demos(): Demo[] {
       { label: 'FOLD ALL  x=½  (fold in half)', op: foldAll(V(R(1, 2), R(0)), V(R(1, 2), R(1)), 'right', 'V') },
       { label: 'FOLD ONE_LAYER  x=¼  (top flap only)', op: oneLayer(V(R(1, 4), R(0)), V(R(1, 4), R(1)), 'left', 'V') },
     ]),
+    // §8.1 v1.3 acceptance: the two-fold reference state (flap at x=¾, then top half down).
+    // Base sheet's top half is ONE facet: 2 layers over [0,½], 4 over [½,¾] → must ramp, not break.
+    run('Two-fold (v1.3 ref)', [
+      { label: 'FOLD ALL  x=¾  (right flap)', op: foldAll(V(R(3, 4), R(0)), V(R(3, 4), R(1)), 'right', 'V') },
+      { label: 'FOLD ALL  y=½  (top half down)', op: foldAll(V(R(0), R(1, 2)), V(R(1), R(1, 2)), 'left', 'V') },
+    ]),
+    // Golden #8 (§9.3): interior-anchored diagonal fold — house with two front flaps meeting at C=(½,½).
+    run('Golden #8 (house)', [
+      { label: 'FOLD ALL  (½,1)–(0,½)  top-left corner in, V', op: foldAll(V(R(1, 2), R(1)), V(R(0), R(1, 2)), 'right', 'V') },
+      { label: 'FOLD ALL  (½,1)–(1,½)  top-right corner in, V', op: foldAll(V(R(1, 2), R(1)), V(R(1), R(1, 2)), 'left', 'V') },
+    ]),
   ];
 }

@@ -1,149 +1,208 @@
 /**
- * FoldedState → three.js meshes (spec §8.1) with continuous-paper rendering.
+ * FoldedState → three.js meshes: spec §8.1 v1.3, the embedding V(state; ε, w).
  *
- * A face's height is its index in the engine's global bottom→top layer order ×
- * thickness. Front/back comes from the det-based side rule. Crucially, every folded
- * CREASE is rendered as a small "wall" bridging the two stacked layers it joins, so
- * the paper reads as ONE continuous folded sheet (wrapping at each fold) rather than
- * a pile of loose polygons — especially visible in the exploded view.
+ * The 2.5D state has NO continuous z; the viewer computes a thickness-aware, slightly-open
+ * paper appearance from it — the split is bookkeeping, not physics, so the render must be
+ * C0-continuous across every SPLIT edge.
+ *
+ *   1. Pointwise base height: z(face) = (stack index of face within its spot) × ε. Spots
+ *      tile the silhouette, so this pointwise field is globally consistent — no topo sort.
+ *   2. Two-tier welding of per-(face, vertex) z, at each folded-space vertex POSITION:
+ *      - SPLIT edges weld UNCONDITIONALLY (mean; independent of w) — one physical facet
+ *        draping over an underlying stack becomes a continuous ramp.
+ *      - folded CREASE edges weld by hinge cluster, blended z = (1−w)·own + w·mean.
+ *      - coincident-but-UNattached instances (separate stacked flaps) are never merged.
+ *   3. Conforming triangulation: neighbour vertices lying on a face's edge are inserted, so
+ *      T-junctions (CONF splits that don't propagate across spots) share vertices — no cracks.
+ *   4. Edge lines: BOUNDARY + folded CREASE only. SPLIT edges are never drawn. No hinge walls.
  */
 import * as THREE from 'three';
 import type { FoldedState, Face, Vec2, FaceId } from '@origami/core';
-import { foldedPoly, faceIsFront, applyIso, signedArea, canonicalPolyKey } from '@origami/core';
+import { foldedPoly, faceIsFront, applyIso } from '@origami/core';
 
-/**
- * Assign each face a height by its position WITHIN ITS SPOT (the set of faces that
- * share the same folded polygon), not by a global index. Faces in different spots
- * are disjoint in xy, so they all sit at z = 0 and only genuinely-overlapping layers
- * are separated. This keeps a flat sheet flat (its halves stay coplanar) instead of
- * stepping them apart — which previously made folds look like they pierced the paper.
- */
-export function layerZMap(faces: readonly Face[], order: readonly FaceId[], thickness: number): Map<string, number> {
-  const rank = new Map<FaceId, number>();
-  order.forEach((id, i) => rank.set(id, i));
-  const groups = new Map<string, Face[]>();
-  for (const f of faces) {
-    const k = canonicalPolyKey(foldedPoly(f));
-    (groups.get(k) ?? groups.set(k, []).get(k)!).push(f);
-  }
-  const z = new Map<string, number>();
-  for (const g of groups.values()) {
-    g.sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
-    g.forEach((f, i) => z.set(f.id, i * thickness));
-  }
-  return z;
-}
-
-export const FRONT_COLOR = 0xd94f5c; // colored paper surface (front)
-export const BACK_COLOR = 0xf3f1ea; // white-ish paper surface (back)
-const EDGE_COLOR = 0x2b2f36;
-const HINGE_COLOR = 0xc94c58; // fold spine
+export const FRONT_COLOR = 0xd94f5c; // colored paper front
+export const BACK_COLOR = 0xf3f1ea;  // white-ish paper back
+const LINE_COLOR = 0x2b2f36;         // boundary + folded crease overlay
 
 export interface BuildOptions {
-  thickness: number;
+  epsilon: number; // "paper thickness" — per-layer z gap
+  weight: number;  // fold tightness w ∈ [0,1]; 0 = flat plates, 1 = welded
 }
-
 export interface Built {
   object: THREE.Group;
   center: THREE.Vector3;
   extent: number;
 }
 
-function toXY(p: Vec2): { x: number; y: number } {
-  return { x: p.x.toNumber(), y: p.y.toNumber() };
+const keyOf = (v: Vec2): string => `${v.x.toString()},${v.y.toString()}`;
+const numOf = (v: Vec2): { x: number; y: number } => ({ x: v.x.toNumber(), y: v.y.toNumber() });
+
+/** Is p strictly interior to segment a–b (exact)? */
+function onEdgeStrict(a: Vec2, b: Vec2, p: Vec2): boolean {
+  const dx = b.x.sub(a.x), dy = b.y.sub(a.y);
+  const px = p.x.sub(a.x), py = p.y.sub(a.y);
+  if (!dx.mul(py).sub(dy.mul(px)).isZero()) return false; // not collinear
+  const dot = px.mul(dx).add(py.mul(dy));
+  const dd = dx.mul(dx).add(dy.mul(dy));
+  return dot.sign() > 0 && dot.cmp(dd) < 0; // strictly between endpoints
 }
 
-function paperMat(color: number, sideMode: THREE.Side): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({
-    color, roughness: 0.82, metalness: 0.0, side: sideMode,
-    polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
-  });
+/** Union-find over a small set of face ids. */
+function makeUF(ids: Iterable<FaceId>) {
+  const parent = new Map<FaceId, FaceId>();
+  for (const id of ids) parent.set(id, id);
+  const find = (x: FaceId): FaceId => {
+    let r = x; while (parent.get(r) !== r) r = parent.get(r)!;
+    while (parent.get(x) !== r) { const n = parent.get(x)!; parent.set(x, r); x = n; }
+    return r;
+  };
+  return {
+    has: (x: FaceId) => parent.has(x),
+    union: (a: FaceId, b: FaceId) => { if (parent.has(a) && parent.has(b)) parent.set(find(a), find(b)); },
+    groups: (): FaceId[][] => {
+      const g = new Map<FaceId, FaceId[]>();
+      for (const x of parent.keys()) (g.get(find(x)) ?? g.set(find(x), []).get(find(x))!).push(x);
+      return [...g.values()];
+    },
+  };
 }
 
-/**
- * Add a face at height z, rendered with DISTINCT front (red) and back (white) paper
- * surfaces. The geometry is wound CCW (normal +z), and the paper's front surface faces
- * +z iff the face is front-up (det>0). So as a flap rotates past vertical during a
- * fold, the camera starts seeing the other surface — the paper visibly flips red↔white,
- * both in the animation and at rest.
- */
-export function addFace(group: THREE.Group, face: Face, z: number): void {
-  let poly = foldedPoly(face);
-  if (signedArea(poly).sign() < 0) poly = [...poly].reverse(); // ensure CCW ⇒ normal +z
-  const xy = poly.map(toXY);
-  const shape = new THREE.Shape();
-  shape.moveTo(xy[0]!.x, xy[0]!.y);
-  for (let i = 1; i < xy.length; i++) shape.lineTo(xy[i]!.x, xy[i]!.y);
-  shape.closePath();
-
-  const geo = new THREE.ShapeGeometry(shape);
-  geo.translate(0, 0, z);
-  const frontUp = faceIsFront(face);
-  const plusZColor = frontUp ? FRONT_COLOR : BACK_COLOR; // surface facing +z (camera)
-  const minusZColor = frontUp ? BACK_COLOR : FRONT_COLOR;
-
-  const top = new THREE.Mesh(geo, paperMat(plusZColor, THREE.FrontSide));
-  const bot = new THREE.Mesh(geo, paperMat(minusZColor, THREE.BackSide));
-  top.userData.faceId = face.id;
-  bot.userData.faceId = face.id;
-  group.add(top, bot);
-
-  const line = new THREE.LineSegments(
-    new THREE.EdgesGeometry(geo, 1),
-    new THREE.LineBasicMaterial({ color: EDGE_COLOR }),
-  );
-  group.add(line);
-}
-
-/** Bridge the two layers joined by a folded crease with a small wall (the fold spine). */
-function addHingeWalls(group: THREE.Group, state: FoldedState, zOf: Map<string, number>): void {
-  for (const e of state.edges.values()) {
-    if (e.kind !== 'CREASE') continue;
-    const [aId, bId] = e.faces;
-    if (bId === null) continue;
-    const fa = state.faces.get(aId);
-    if (!fa) continue;
-    const za = zOf.get(aId) ?? 0;
-    const zb = zOf.get(bId) ?? 0;
-    const h0 = toXY(applyIso(fa.T, e.srcSeg[0]));
-    const h1 = toXY(applyIso(fa.T, e.srcSeg[1]));
-    // quad (h0,za)-(h1,za)-(h1,zb)-(h0,zb)
-    const verts = new Float32Array([
-      h0.x, h0.y, za, h1.x, h1.y, za, h1.x, h1.y, zb,
-      h0.x, h0.y, za, h1.x, h1.y, zb, h0.x, h0.y, zb,
-    ]);
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(verts, 3));
-    g.computeVertexNormals();
-    group.add(
-      new THREE.Mesh(
-        g,
-        new THREE.MeshStandardMaterial({ color: HINGE_COLOR, roughness: 0.9, side: THREE.DoubleSide }),
-      ),
-    );
-  }
-}
+interface FaceGeom { face: Face; verts: Vec2[]; z: number[] } // enriched folded polygon + per-vertex z
 
 export function buildModel(state: FoldedState, opts: BuildOptions): Built {
-  const object = new THREE.Group();
-  const faces = [...state.faces.values()];
-  const zOf = layerZMap(faces, state.order, opts.thickness);
+  const eps = opts.epsilon, w = opts.weight;
 
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  let maxZ = 0;
-  for (const face of faces) {
-    for (const p of foldedPoly(face)) {
-      const x = p.x.toNumber();
-      const y = p.y.toNumber();
-      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
-      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
-    }
-    const z = zOf.get(face.id) ?? 0;
-    maxZ = Math.max(maxZ, z);
-    addFace(object, face, z);
+  // 1. stack index (within spot) per face — the base layer height
+  const stackIdx = new Map<FaceId, number>();
+  for (const spot of state.spots.values()) spot.stack.forEach((id, i) => stackIdx.set(id, i));
+
+  // gather every folded vertex position (for conforming T-junction insertion)
+  const folded = new Map<FaceId, readonly Vec2[]>();
+  const allPos = new Map<string, Vec2>();
+  for (const f of state.faces.values()) {
+    const fp = foldedPoly(f);
+    folded.set(f.id, fp);
+    for (const v of fp) allPos.set(keyOf(v), v);
   }
-  addHingeWalls(object, state, zOf);
+  const positions = [...allPos.values()];
 
-  const center = new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2, maxZ / 2);
-  return { object, center, extent: Math.max(maxX - minX, maxY - minY) || 1 };
+  // 3. conforming subdivision: insert any global vertex lying strictly on a face edge
+  const fg = new Map<FaceId, FaceGeom>();
+  for (const f of state.faces.values()) {
+    const poly = folded.get(f.id)!;
+    const out: Vec2[] = [];
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i]!, b = poly[(i + 1) % poly.length]!;
+      out.push(a);
+      const mid = positions.filter((p) => onEdgeStrict(a, b, p));
+      const t = (p: Vec2) => {
+        const dx = b.x.sub(a.x), dy = b.y.sub(a.y);
+        const dot = p.x.sub(a.x).mul(dx).add(p.y.sub(a.y).mul(dy)), dd = dx.mul(dx).add(dy.mul(dy));
+        return dot.toNumber() / dd.toNumber();
+      };
+      mid.sort((p, q) => t(p) - t(q));
+      out.push(...mid);
+    }
+    const base = (stackIdx.get(f.id) ?? 0) * eps;
+    fg.set(f.id, { face: f, verts: out, z: out.map(() => base) });
+  }
+
+  // per-position (face,vertex) instances, and per-position SPLIT / CREASE adjacency
+  const instances = new Map<string, { id: FaceId; vi: number }[]>();
+  for (const g of fg.values()) g.verts.forEach((v, vi) => {
+    const k = keyOf(v);
+    (instances.get(k) ?? instances.set(k, []).get(k)!).push({ id: g.face.id, vi });
+  });
+  const adj = { SPLIT: new Map<string, [FaceId, FaceId][]>(), CREASE: new Map<string, [FaceId, FaceId][]>() };
+  for (const e of state.edges.values()) {
+    const [a, b] = e.faces;
+    if (b === null || (e.kind !== 'SPLIT' && e.kind !== 'CREASE')) continue;
+    const fa = state.faces.get(a);
+    if (!fa) continue;
+    const map = adj[e.kind as 'SPLIT' | 'CREASE'];
+    for (const end of [e.srcSeg[0], e.srcSeg[1]]) {
+      const k = keyOf(applyIso(fa.T, end));
+      (map.get(k) ?? map.set(k, []).get(k)!).push([a, b]);
+    }
+  }
+
+  // 2. two-tier weld at each position
+  for (const [k, insts] of instances) {
+    if (insts.length < 2 && !(adj.SPLIT.get(k) || adj.CREASE.get(k))) continue;
+    const here = new Set(insts.map((i) => i.id));
+    const viAt = new Map<FaceId, number>(insts.map((i) => [i.id, i.vi]));
+    const zAt = (id: FaceId) => fg.get(id)!.z[viAt.get(id)!]!;
+
+    const weld = (kinds: ('SPLIT' | 'CREASE')[], blend: boolean) => {
+      const uf = makeUF(here);
+      for (const kind of kinds) for (const [a, b] of adj[kind].get(k) ?? []) {
+        if (here.has(a) && here.has(b)) uf.union(a, b);
+      }
+      for (const grp of uf.groups()) {
+        if (grp.length < 2) continue;
+        const mean = grp.reduce((s, id) => s + zAt(id), 0) / grp.length;
+        for (const id of grp) {
+          const g = fg.get(id)!, vi = viAt.get(id)!;
+          g.z[vi] = blend ? (1 - w) * g.z[vi]! + w * mean : mean;
+        }
+      }
+    };
+    weld(['SPLIT'], false);            // tier 1: unconditional
+    weld(['SPLIT', 'CREASE'], true);   // tier 2: hinge clusters, w-blended
+  }
+
+  // 4. build meshes + edge lines
+  const object = new THREE.Group();
+  const box = new THREE.Box3();
+  const tmp = new THREE.Vector3();
+  for (const g of fg.values()) addFaceSurface(object, g, box, tmp);
+  addEdgeLines(object, state, fg);
+
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  return { object, center, extent: Math.max(size.x, size.y, size.z) || 1 };
+}
+
+function paperMat(color: number, side: THREE.Side): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({ color, roughness: 0.9, metalness: 0, side, flatShading: false });
+}
+
+/** Fan-triangulate the (convex) enriched face with per-vertex z; two-sided red/white. */
+function addFaceSurface(group: THREE.Group, g: FaceGeom, box: THREE.Box3, tmp: THREE.Vector3): void {
+  const xy = g.verts.map(numOf);
+  const pos: number[] = [];
+  const P = (i: number): number[] => [xy[i]!.x, xy[i]!.y, g.z[i]!];
+  for (let i = 1; i + 1 < xy.length; i++) pos.push(...P(0), ...P(i), ...P(i + 1));
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+  geo.computeVertexNormals();
+  const front = faceIsFront(g.face);
+  const top = new THREE.Mesh(geo, paperMat(front ? FRONT_COLOR : BACK_COLOR, THREE.FrontSide));
+  const bot = new THREE.Mesh(geo, paperMat(front ? BACK_COLOR : FRONT_COLOR, THREE.BackSide));
+  top.userData.faceId = g.face.id; bot.userData.faceId = g.face.id;
+  group.add(top, bot);
+  for (let i = 0; i < xy.length; i++) box.expandByPoint(tmp.set(xy[i]!.x, xy[i]!.y, g.z[i]!));
+}
+
+/** Draw BOUNDARY + folded CREASE edges only (never SPLIT), at the welded height. */
+function addEdgeLines(group: THREE.Group, state: FoldedState, fg: Map<FaceId, FaceGeom>): void {
+  const pts: number[] = [];
+  const zAtPos = (id: FaceId, k: string): number | null => {
+    const g = fg.get(id); if (!g) return null;
+    for (let i = 0; i < g.verts.length; i++) if (keyOf(g.verts[i]!) === k) return g.z[i]!;
+    return null;
+  };
+  for (const e of state.edges.values()) {
+    if (e.kind !== 'BOUNDARY' && e.kind !== 'CREASE') continue; // SPLIT never drawn
+    const f = state.faces.get(e.faces[0]);
+    if (!f) continue;
+    const p = applyIso(f.T, e.srcSeg[0]), q = applyIso(f.T, e.srcSeg[1]);
+    const zp = zAtPos(f.id, keyOf(p)) ?? 0, zq = zAtPos(f.id, keyOf(q)) ?? 0;
+    const np = numOf(p), nq = numOf(q);
+    pts.push(np.x, np.y, zp + 1e-4, nq.x, nq.y, zq + 1e-4);
+  }
+  if (!pts.length) return;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
+  group.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: LINE_COLOR })));
 }

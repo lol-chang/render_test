@@ -17,7 +17,6 @@ import {
 } from '@origami/core';
 import { demos, type Demo } from './demos.js';
 import { buildModel } from './build3d.js';
-import { buildFoldAnim, easeInOut, type FoldAnim } from './animate.js';
 
 const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -61,11 +60,10 @@ const allDemos: Demo[] = [INTERACTIVE, ...demoList];
 let current: Demo = allDemos[0]!;
 let step = 0;
 let exploded = false;
-let topView = false; // default to a 3/4 perspective so folds read as 3D up-and-over motions
+let topView = true; // spec §8.1: default orthographic top view (matches diagrams / Π(S))
 let currentObj: THREE.Object3D | null = null;
 let modelCenter = new THREE.Vector3();
 let modelExtent = 1;
-let anim: { obj: FoldAnim; t0: number; dur: number; post: FoldedState } | null = null;
 
 // interactive fold selections
 let selectedFace: FaceId | null = null;
@@ -74,8 +72,10 @@ let mode: 'ALL' | 'ONE_LAYER' = 'ALL';
 let direction: 'V' | 'M' = 'V';
 let side: 'left' | 'right' = 'left';
 
-const FOLD_THICKNESS = 0.014; // folds always animate tight
-const thickness = () => (exploded ? 0.09 : FOLD_THICKNESS);
+// V(state; ε, w) — spec §8.1. Paper preset default: w=1, ε=0.004. Explode multiplies ε.
+let epsilon = 0.004;
+let weight = 1;
+const epsFor = () => epsilon * (exploded ? 12 : 1);
 const isInteractive = () => current === INTERACTIVE;
 
 // ---- DOM ----
@@ -109,7 +109,7 @@ function clearCurrent() { if (currentObj) { scene.remove(currentObj); disposeObj
 
 function showState(state: FoldedState, reframe = false) {
   clearCurrent();
-  const built = buildModel(state, { thickness: thickness() });
+  const built = buildModel(state, { epsilon: epsFor(), weight });
   scene.add(built.object);
   currentObj = built.object;
   modelCenter = built.center; modelExtent = built.extent;
@@ -162,33 +162,16 @@ function rebuildHistory() {
   });
 }
 
-// ---- navigation ----
-function goToStep(n: number, allowAnim: boolean) {
+// ---- navigation ---- (§8.1 static build; fold animation is Phase D, deferred → snap)
+function goToStep(n: number, _allowAnim: boolean) {
   n = Math.max(0, Math.min(current.states.length - 1, n));
-  const forwardOne = n === step + 1;
-  const pre = current.states[step]!;
-  const post = current.states[n]!;
   step = n; stepRange.value = String(step);
-  const op = post.lastOp;
-  if (allowAnim && forwardOne && op && op.type === 'FOLD') {
-    const pr = planFold(pre, op as FoldOp);
-    if ('plan' in pr) {
-      clearCurrent();
-      const a = buildFoldAnim(pr.plan, FOLD_THICKNESS);
-      scene.add(a.object); currentObj = a.object;
-      anim = { obj: a, t0: performance.now(), dur: 700, post };
-      info.textContent = `${current.labels[step] ?? ''}\n folding…`;
-      stepLabel.textContent = `${step}/${current.states.length - 1}`;
-      return;
-    }
-  }
-  anim = null;
-  showState(post);
+  showState(current.states[n]!);
   rebuildHistory();
 }
 
 function selectDemo(i: number, stepOverride?: number) {
-  anim = null; selectedFace = null;
+  selectedFace = null;
   current = allDemos[i]!;
   const last = current.states.length - 1;
   step = stepOverride === undefined || stepOverride < 0 ? last : Math.min(last, stepOverride);
@@ -294,7 +277,6 @@ function pick(ev: PointerEvent): string | null {
 }
 
 canvas.addEventListener('pointermove', (ev) => {
-  if (anim) return;
   const id = pick(ev);
   const state = frameState();
   if (id && state.faces.has(id as FaceId)) {
@@ -307,7 +289,7 @@ canvas.addEventListener('pointermove', (ev) => {
 });
 
 canvas.addEventListener('click', (ev) => {
-  if (!isInteractive() || anim) return;
+  if (!isInteractive()) return;
   const id = pick(ev);
   if (id) { selectedFace = id as FaceId; refreshFoldUI(frameState()); }
 });
@@ -318,8 +300,24 @@ stepRange.addEventListener('input', () => goToStep(Number(stepRange.value), fals
 $('prev').addEventListener('click', () => goToStep(step - 1, false));
 $('next').addEventListener('click', () => goToStep(step + 1, true));
 $('topView').addEventListener('click', (e) => { topView = (e.target as HTMLButtonElement).classList.toggle('active'); frameCamera(); });
-$('explode').addEventListener('click', (e) => { exploded = (e.target as HTMLButtonElement).classList.toggle('active'); if (!anim) showState(frameState()); });
+$('explode').addEventListener('click', (e) => { exploded = (e.target as HTMLButtonElement).classList.toggle('active'); showState(frameState()); });
 axisSel.addEventListener('change', dryRun);
+
+// V(state; ε, w) sliders + presets (§8.1 item 5)
+const epsRange = $<HTMLInputElement>('eps');
+const wRange = $<HTMLInputElement>('weight');
+const epsVal = $('epsVal'), wVal = $('wVal');
+function syncEmbed() { epsVal.textContent = epsilon.toFixed(4); wVal.textContent = weight.toFixed(2); }
+epsRange.addEventListener('input', () => { epsilon = Number(epsRange.value); syncEmbed(); showState(frameState()); });
+wRange.addEventListener('input', () => { weight = Number(wRange.value); syncEmbed(); showState(frameState()); });
+function applyPreset(paper: boolean) {
+  weight = 1; epsilon = 0.004; exploded = !paper;
+  $('explode').classList.toggle('active', exploded);
+  epsRange.value = String(epsilon); wRange.value = String(weight); syncEmbed();
+  showState(frameState());
+}
+$('presetPaper').addEventListener('click', () => applyPreset(true));
+$('presetExplode').addEventListener('click', () => applyPreset(false));
 const toggle = (id: string, other: string, set: () => void) => $(id).addEventListener('click', () => {
   $(id).classList.add('active'); $(other).classList.remove('active'); set(); dryRun();
 });
@@ -341,34 +339,17 @@ window.addEventListener('resize', resize);
 
 function tick() {
   requestAnimationFrame(tick);
-  if (anim) {
-    const t = Math.min(1, (performance.now() - anim.t0) / anim.dur);
-    anim.obj.setAngle(easeInOut(t) * Math.PI);
-    if (t >= 1) { const post = anim.post; anim = null; showState(post); rebuildHistory(); }
-  }
   controls.update();
   renderer.render(scene, camera as THREE.Camera);
-}
-
-/** Debug/deep-link: freeze the fold that produced the current step at t ∈ [0,1]. */
-function showFoldFrozen(t: number): void {
-  if (step < 1) return;
-  const pre = current.states[step - 1]!;
-  const op = current.states[step]!.lastOp;
-  if (!op || op.type !== 'FOLD') return;
-  const pr = planFold(pre, op as FoldOp);
-  if (!('plan' in pr)) return;
-  clearCurrent();
-  const a = buildFoldAnim(pr.plan, FOLD_THICKNESS);
-  a.setAngle(easeInOut(t) * Math.PI);
-  scene.add(a.object); currentObj = a.object;
-  frameCamera();
 }
 
 resize();
 const hash = new URLSearchParams(location.hash.slice(1));
 if (hash.get('view') === 'persp') { topView = false; $('topView').classList.remove('active'); }
 if (hash.get('explode') === '1') { exploded = true; $('explode').classList.add('active'); }
+if (hash.has('eps')) epsilon = Number(hash.get('eps'));
+if (hash.has('w')) weight = Number(hash.get('w'));
+$('topView').classList.toggle('active', topView);
+epsRange.value = String(epsilon); wRange.value = String(weight); syncEmbed();
 selectDemo(hash.has('demo') ? Number(hash.get('demo')) : 1, hash.has('step') ? Number(hash.get('step')) : undefined);
-if (hash.has('foldT')) showFoldFrozen(Number(hash.get('foldT')));
 tick();

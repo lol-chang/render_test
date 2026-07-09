@@ -58,6 +58,16 @@
         <button id="topView">Top</button>
         <button id="explode">Explode</button>
       </div>
+
+      <div class="btnrow">
+        <button id="presetPaper">Paper preset</button>
+        <button id="presetExplode">Explode preset</button>
+      </div>
+      <label>Paper thickness ε — <span id="epsVal">0.0040</span></label>
+      <div class="row"><input id="eps" type="range" min="0.001" max="0.05" step="0.001" value="0.004" /></div>
+      <label>Fold tightness w — <span id="wVal">1.00</span></label>
+      <div class="row"><input id="weight" type="range" min="0" max="1" step="0.02" value="1" /></div>
+
       <div id="info"></div>
 
       <div id="foldui">
