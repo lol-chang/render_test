@@ -251,9 +251,16 @@ function addEdgeLines(group: THREE.Group, state: FoldedState, fg: Map<FaceId, Fa
     }
     return bestZ;
   };
+  // §7 visible-surface rule: only the TOP face of each spot is seen from above, so draw an
+  // edge only where it touches a top face. This stops a lower layer's fold lines from being
+  // painted onto the clean, uncut top sheet that covers them.
+  const topFaces = new Set<FaceId>();
+  for (const sp of state.spots.values()) if (sp.stack.length) topFaces.add(sp.stack[sp.stack.length - 1]!);
   for (const e of state.edges.values()) {
     if (e.kind !== 'BOUNDARY' && e.kind !== 'CREASE') continue; // SPLIT never drawn
-    const f = state.faces.get(e.faces[0]);
+    const [a, b] = e.faces;
+    if (!topFaces.has(a) && !(b !== null && topFaces.has(b))) continue; // hidden lower-layer edge
+    const f = state.faces.get(topFaces.has(a) ? a : (b as FaceId));
     if (!f) continue;
     const p = applyIso(f.T, e.srcSeg[0]), q = applyIso(f.T, e.srcSeg[1]);
     const np = numOf(p), nq = numOf(q);
