@@ -20,6 +20,11 @@ const foldAll = (a: Vec2, b: Vec2, side: 'left' | 'right', dir: 'V' | 'M'): Op =
 const oneLayer = (a: Vec2, b: Vec2, side: 'left' | 'right', dir: 'V' | 'M'): Op => ({
   type: 'FOLD', mode: 'ONE_LAYER', axis: { a, b }, movingSide: side, direction: dir,
 });
+const flip = (): Op => ({ type: 'FLIP' });
+const precrease = (a: Vec2, b: Vec2, side: 'left' | 'right', dir: 'V' | 'M'): Op => ({
+  type: 'PRECREASE', axis: { a, b }, movingSide: side, direction: dir,
+});
+const unfold = (): Op => ({ type: 'UNFOLD_LAST' });
 
 export interface Demo {
   name: string;
@@ -74,6 +79,36 @@ export function demos(): Demo[] {
     run('Golden #8 (house)', [
       { label: 'FOLD ALL  (½,1)–(0,½)  top-left corner in, V', op: foldAll(V(R(1, 2), R(1)), V(R(0), R(1, 2)), 'right', 'V') },
       { label: 'FOLD ALL  (½,1)–(1,½)  top-right corner in, V', op: foldAll(V(R(1, 2), R(1)), V(R(1), R(1, 2)), 'left', 'V') },
+    ]),
+
+    // ---- operation showcase (harder / less-common ops, all engine-verified) ----
+    run('Mountain fold (behind)', [
+      { label: 'FOLD ALL  x=½  (right, MOUNTAIN → behind)', op: foldAll(V(R(1, 2), R(0)), V(R(1, 2), R(1)), 'right', 'M') },
+    ]),
+    run('Fold behind + FLIP', [
+      { label: 'FOLD ALL  y=½  (MOUNTAIN)', op: foldAll(V(R(0), R(1, 2)), V(R(1), R(1, 2)), 'left', 'M') },
+      { label: 'FLIP  (turn the whole model over)', op: flip() },
+    ]),
+    run('One-layer behind (M)', [
+      { label: 'FOLD ALL  x=½  (fold in half)', op: foldAll(V(R(1, 2), R(0)), V(R(1, 2), R(1)), 'right', 'V') },
+      { label: 'FOLD ONE_LAYER  x=¼  (top flap, MOUNTAIN)', op: oneLayer(V(R(1, 4), R(0)), V(R(1, 4), R(1)), 'left', 'M') },
+    ]),
+    run('Pre-crease then fold', [
+      { label: 'PRECREASE  x=½  (mark only, no fold)', op: precrease(V(R(1, 2), R(0)), V(R(1, 2), R(1)), 'right', 'V') },
+      { label: 'FOLD ALL  x=½  (fold along the mark)', op: foldAll(V(R(1, 2), R(0)), V(R(1, 2), R(1)), 'right', 'V') },
+      { label: 'UNFOLD_LAST  (revert the fold)', op: unfold() },
+    ]),
+    run('Blintz base (4 corners in)', [
+      { label: 'FOLD ALL  top-left corner in', op: foldAll(V(R(1, 2), R(1)), V(R(0), R(1, 2)), 'right', 'V') },
+      { label: 'FOLD ALL  top-right corner in', op: foldAll(V(R(1, 2), R(1)), V(R(1), R(1, 2)), 'left', 'V') },
+      { label: 'FOLD ALL  bottom-left corner in', op: foldAll(V(R(1, 2), R(0)), V(R(0), R(1, 2)), 'left', 'V') },
+      { label: 'FOLD ALL  bottom-right corner in', op: foldAll(V(R(1, 2), R(0)), V(R(1), R(1, 2)), 'right', 'V') },
+    ]),
+    run('Rabbit-ish (band + ears + flip)', [
+      { label: 'FOLD ALL  y=½  (band up)', op: foldAll(V(R(0), R(1, 2)), V(R(1), R(1, 2)), 'left', 'V') },
+      { label: 'FOLD ALL  left ear', op: foldAll(V(R(1, 2), R(1, 2)), V(R(0), R(1)), 'left', 'V') },
+      { label: 'FOLD ALL  right ear', op: foldAll(V(R(1, 2), R(1, 2)), V(R(1), R(1)), 'right', 'V') },
+      { label: 'FLIP', op: flip() },
     ]),
   ];
 }

@@ -202,6 +202,7 @@ export function buildModel(state: FoldedState, opts: BuildOptions): Built {
   const tmp = new THREE.Vector3();
   for (const g of fg.values()) addFaceSurface(object, g, box, tmp);
   addEdgeLines(object, state, fg);
+  addPendingCreases(object, state, fg);
 
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
@@ -210,6 +211,36 @@ export function buildModel(state: FoldedState, opts: BuildOptions): Built {
 
 function paperMat(color: number, side: THREE.Side): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({ color, roughness: 0.9, metalness: 0, side, flatShading: false });
+}
+
+/** Unfolded PRECREASE marks (annotation, not topology) as dashed blue lines on their sheet. */
+function addPendingCreases(group: THREE.Group, state: FoldedState, fg: Map<FaceId, FaceGeom>): void {
+  if (!state.pendingCreases.length) return;
+  const mat = new THREE.LineDashedMaterial({ color: 0x2d6cdf, dashSize: 0.03, gapSize: 0.02 });
+  for (const pc of state.pendingCreases) {
+    const mx = (pc.seg[0].x.toNumber() + pc.seg[1].x.toNumber()) / 2;
+    const my = (pc.seg[0].y.toNumber() + pc.seg[1].y.toNumber()) / 2;
+    let host: Face | undefined; // source face whose polygon contains the mark's midpoint
+    for (const f of state.faces.values()) {
+      const poly = f.srcPoly.map(numOf);
+      let pos = false, neg = false;
+      for (let i = 0; i < poly.length; i++) {
+        const a = poly[i]!, b = poly[(i + 1) % poly.length]!;
+        const s = (b.x - a.x) * (my - a.y) - (b.y - a.y) * (mx - a.x);
+        if (s > 1e-9) pos = true; else if (s < -1e-9) neg = true;
+      }
+      if (!(pos && neg)) { host = f; break; }
+    }
+    if (!host) continue;
+    const g = fg.get(host.id);
+    const zc = (g ? Math.max(...g.z) : 0) + 1e-3;
+    const p = numOf(applyIso(host.T, pc.seg[0])), q = numOf(applyIso(host.T, pc.seg[1]));
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([p.x, p.y, zc, q.x, q.y, zc]), 3));
+    const line = new THREE.Line(geo, mat);
+    line.computeLineDistances();
+    group.add(line);
+  }
 }
 
 /** Fan-triangulate the (convex) enriched face with per-vertex z; two-sided red/white. */
