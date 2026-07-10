@@ -45,8 +45,9 @@ function* candidateOrders(statics: FaceId[], movers: FaceId[]): Generator<FaceId
       yield [...statics.slice(0, pos), ...block, ...statics.slice(pos)];
     }
   }
-  // fallback: general interleavings (bounded by the caller's iteration cap)
-  yield* interleavings(statics, movers);
+  // Fallback: general interleavings — but only when the fan-out is small. The count grows
+  // as C(n,k), so for deep states skip it (block placement already covers reverse folds).
+  if (statics.length + movers.length <= 12) yield* interleavings(statics, movers);
 }
 
 function* interleavings(a: FaceId[], b: FaceId[]): Generator<FaceId[]> {
