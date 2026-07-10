@@ -5,4 +5,5 @@ export * from './axes.js';
 export * from './onelayer.js';
 export * from './flip.js';
 export * from './precrease.js';
+export * from './reverse.js';
 export * from './apply.js';

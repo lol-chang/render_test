@@ -40,7 +40,23 @@ export interface UnfoldLastOp {
   readonly count?: number;
 }
 
-export type Op = FoldOp | FlipOp | PrecreaseOp | UnfoldLastOp;
+/**
+ * Inside-reverse fold (§3.3): reflect a flap's tip across the axis — same reflection
+ * geometry as a FOLD — but instead of lifting the movers cleanly above/below the stack
+ * (which ONE_LAYER's P2 requires), the reversed tip is NESTED between the existing
+ * layers. That nesting is the whole point of a reverse fold and is exactly what P2
+ * forbids, so it is its own op. The valid layer interleaving is found by construction
+ * and confirmed by the checker (I1–I6).
+ */
+export interface InsideReverseFoldOp {
+  readonly type: 'INSIDE_REVERSE_FOLD';
+  readonly axis: AxisSpec;
+  readonly movingSide: MovingSide;
+  readonly direction: Assignment;
+  readonly seedFaceIds?: readonly FaceId[];
+}
+
+export type Op = FoldOp | FlipOp | PrecreaseOp | UnfoldLastOp | InsideReverseFoldOp;
 
 export type Invariant = 'I1' | 'I2' | 'I3' | 'I4' | 'I5' | 'I6';
 

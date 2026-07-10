@@ -25,6 +25,9 @@ const precrease = (a: Vec2, b: Vec2, side: 'left' | 'right', dir: 'V' | 'M'): Op
   type: 'PRECREASE', axis: { a, b }, movingSide: side, direction: dir,
 });
 const unfold = (): Op => ({ type: 'UNFOLD_LAST' });
+const reverseFold = (a: Vec2, b: Vec2, side: 'left' | 'right', dir: 'V' | 'M'): Op => ({
+  type: 'INSIDE_REVERSE_FOLD', axis: { a, b }, movingSide: side, direction: dir,
+});
 
 export interface Demo {
   name: string;
@@ -110,20 +113,20 @@ export function demos(): Demo[] {
       { label: 'FOLD ALL  right ear', op: foldAll(V(R(1, 2), R(1, 2)), V(R(1), R(1)), 'right', 'V') },
       { label: 'FLIP', op: flip() },
     ]),
-    // Jumping frog — reached the classic preliminary/frog BASE with real ops only, checker-
-    // valid at every step: precrease both midlines, then fold all four corners to the centre
-    // C=(½,½) (each corner lands exactly on C; the corner-to-centre fold is certified by
-    // Golden #8). Result = the diamond preliminary base every frog is built on.
-    // Going further (splaying the four flaps into legs) is a PETAL / INSIDE-REVERSE fold: the
-    // moving point has to tuck BETWEEN existing layers, which a flat v1 fold cannot do — the
-    // engine rightly refuses it (E_BLOCKED). That is the v2 boundary (spec §11).
-    run('Frog base (4 corners → centre)', [
+    // Jumping frog. Precrease both midlines, fold all four corners to the centre C=(½,½)
+    // to reach the diamond preliminary base, then make the legs with INSIDE_REVERSE_FOLD —
+    // the reversed tip tucks BETWEEN existing layers (a plain fold cannot, that is P2), and
+    // the engine finds a checker-valid layer nesting. The diamond sits in folded space over
+    // y ∈ [−1, 0] (top ½,0 · bottom ½,−1 · sides 0,−½ and 1,−½), so the leg creases are
+    // given in those coordinates.
+    run('Frog (base + reverse-fold legs)', [
       { label: 'PRECREASE  x=½  (vertical)', op: precrease(V(R(1, 2), R(0)), V(R(1, 2), R(1)), 'right', 'V') },
       { label: 'PRECREASE  y=½  (horizontal)', op: precrease(V(R(0), R(1, 2)), V(R(1), R(1, 2)), 'left', 'V') },
       { label: 'FOLD  top-left corner → centre (½,½)', op: foldAll(V(R(1, 2), R(1)), V(R(0), R(1, 2)), 'right', 'V') },
       { label: 'FOLD  top-right corner → centre (½,½)', op: foldAll(V(R(1, 2), R(1)), V(R(1), R(1, 2)), 'left', 'V') },
       { label: 'FOLD  bottom-left corner → centre (½,½)', op: foldAll(V(R(0), R(1, 2)), V(R(1, 2), R(0)), 'left', 'V') },
       { label: 'FOLD  bottom-right corner → centre (½,½)', op: foldAll(V(R(1), R(1, 2)), V(R(1, 2), R(0)), 'right', 'V') },
+      { label: 'INSIDE_REVERSE_FOLD  bottom tip (leg)', op: reverseFold(V(R(0), R(-3, 4)), V(R(1), R(-3, 4)), 'right', 'V') },
     ]),
   ];
 }

@@ -6,6 +6,7 @@ import { foldAll, planFoldAll, PlanResult } from './fold.js';
 import { foldOneLayer, planOneLayer } from './onelayer.js';
 import { flip } from './flip.js';
 import { precrease } from './precrease.js';
+import { insideReverseFold } from './reverse.js';
 
 /** Plan a FOLD without committing (moving set + hinge) — used by the viewer to animate. */
 export function planFold(state: FoldedState, op: FoldOp): PlanResult {
@@ -36,5 +37,7 @@ export function applyOp(state: FoldedState, op: Op): Result {
       return precrease(state, op);
     case 'UNFOLD_LAST':
       return unfoldLast(state, op.count ?? 1);
+    case 'INSIDE_REVERSE_FOLD':
+      return insideReverseFold(state, op);
   }
 }
