@@ -126,6 +126,9 @@ export function demos(): Demo[] {
       { label: 'FOLD  top-right corner → centre  (triangle house)', op: foldAll(V(R(1, 2), R(1)), V(R(1), R(1, 2)), 'left', 'V') },
       { label: 'FOLD  left side → centre line (x=¼)', op: foldAll(V(R(1, 4), R(0)), V(R(1, 4), R(1)), 'left', 'V') },
       { label: 'FOLD  right side → centre line (x=¾)', op: foldAll(V(R(3, 4), R(0)), V(R(3, 4), R(1)), 'right', 'V') },
+      { label: 'FOLD ONE_LAYER  bottom-mid → left  (leg, top layer)', op: oneLayer(V(R(1, 2), R(0)), V(R(1, 4), R(1, 2)), 'left', 'V') },
+      { label: 'FOLD ONE_LAYER  bottom-mid → right  (leg, top layer)', op: oneLayer(V(R(1, 2), R(0)), V(R(3, 4), R(1, 2)), 'right', 'V') },
+      { label: 'FLIP  (turn the frog over)', op: flip() },
     ]),
   ];
 }
