@@ -111,7 +111,11 @@ function clearCurrent() { if (currentObj) { scene.remove(currentObj); disposeObj
 
 function showState(state: FoldedState, reframe = false) {
   clearCurrent();
-  const built = buildModel(state, { epsilon: epsFor(), weight, weld: !exploded });
+  // Explode = layer-order pedagogy: force w=0 so CREASE folds separate into visible layers,
+  // but keep welding ON — the SPLIT tier is unconditional, so one physical sheet spanning
+  // stack levels stays CONNECTED as a ramp (never cut into floating plates). Paper preset
+  // uses the slider w (continuous paper at w=1).
+  const built = buildModel(state, { epsilon: epsFor(), weight: exploded ? 0 : weight });
   scene.add(built.object);
   currentObj = built.object;
   modelCenter = built.center; modelExtent = built.extent;

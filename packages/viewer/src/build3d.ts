@@ -26,12 +26,11 @@ const LINE_COLOR = 0x2b2f36;         // boundary + folded crease overlay
 
 export interface BuildOptions {
   epsilon: number; // "paper thickness" — per-layer z gap
-  weight: number;  // fold tightness w ∈ [0,1]; 0 = flat plates, 1 = welded
-  // Explode = layer-order pedagogy (§8.1 item 5): "multiplying gaps" ⇒ separate the layers.
-  // With weld off, every face is a flat plate at its stack height, so the topmost layer is
-  // unambiguously on top and no welded ramp bends a top facet down into the middle. The
-  // Paper preset keeps welding (continuous paper at tiny ε).
-  weld?: boolean;  // default true
+  // Fold tightness w ∈ [0,1]. SPLIT welding is unconditional (one physical sheet always
+  // stays connected as a ramp — never cut into plates); w only gates the CREASE weld:
+  // w=1 joins folds into continuous paper (Paper preset), w=0 separates the crease layers
+  // so the stack is legible (Explode) while same-sheet parts stay connected.
+  weight: number;
 }
 export interface Built {
   object: THREE.Group;
@@ -147,8 +146,8 @@ export function buildModel(state: FoldedState, opts: BuildOptions): Built {
     }
   }
 
-  // 2. two-tier weld at each position (skipped in the Explode pedagogy view → flat plates)
-  if (opts.weld ?? true) for (const [k, insts] of instances) {
+  // 2. two-tier weld at each position (tier1 SPLIT always; tier2 CREASE gated by w)
+  for (const [k, insts] of instances) {
     if (insts.length < 2 && !(adj.SPLIT.get(k) || adj.CREASE.get(k))) continue;
     const here = new Set(insts.map((i) => i.id));
     const viAt = new Map<FaceId, number>(insts.map((i) => [i.id, i.vi]));
