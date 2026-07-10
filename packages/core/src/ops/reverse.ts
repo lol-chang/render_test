@@ -30,7 +30,25 @@ import { splitAtAxis, renormalizeToCONF } from './split.js';
 import { faceSide, sideSign, recordHingeCreases } from './fold.js';
 import { InsideReverseFoldOp, Result, ok, err } from './types.js';
 
-/** Interleavings of two sequences that preserve each one's internal order. */
+/**
+ * Candidate layer orders, cheapest first. A reverse/petal fold keeps the reversed tip
+ * together, so try inserting the movers as ONE contiguous block (in order, then reversed)
+ * at each gap between the statics — O(n) placements. A block wedged strictly inside the
+ * statics is the nested (non-trivial) reverse fold; the two extreme placements are the
+ * plain folds. Only if no block placement is accepted do we fall back to a bounded search
+ * over general interleavings.
+ */
+function* candidateOrders(statics: FaceId[], movers: FaceId[]): Generator<FaceId[]> {
+  const blocks = movers.length > 1 ? [movers, [...movers].reverse()] : [movers];
+  for (const block of blocks) {
+    for (let pos = 0; pos <= statics.length; pos++) {
+      yield [...statics.slice(0, pos), ...block, ...statics.slice(pos)];
+    }
+  }
+  // fallback: general interleavings (bounded by the caller's iteration cap)
+  yield* interleavings(statics, movers);
+}
+
 function* interleavings(a: FaceId[], b: FaceId[]): Generator<FaceId[]> {
   if (a.length === 0) {
     yield [...b];
@@ -87,18 +105,23 @@ export function insideReverseFold(state: FoldedState, op: InsideReverseFoldOp): 
   );
   const creases = recordHingeCreases(moved, moverSet, axis, op.direction, state.creases);
 
-  const statics = split.order.filter((id) => !moverSet.has(id));
-  const movers = split.order.filter((id) => moverSet.has(id));
+  // CONF renormalization is geometry-only and order-independent, so run it ONCE. Only the
+  // layer order then varies across candidates — no re-splitting per candidate.
+  const renorm = renormalizeToCONF(moved, split.order);
+  const isMover = (fid: FaceId): boolean =>
+    [...moverSet].some((m) => fid === m || fid.startsWith(`${m}:`));
+  const staticsF = renorm.order.filter((id) => !isMover(id));
+  const moversF = renorm.order.filter((id) => isMover(id));
+  const moverFinal = new Set(moversF);
 
-  // Prefer a genuinely nested interleaving; fall back to any valid order.
+  // Prefer a genuinely nested order (movers wedged inside); fall back to any valid order.
   let fallback: FoldedState | null = null;
   let iter = 0;
-  for (const ord of interleavings(statics, movers)) {
-    if (++iter > 5000) break;
-    const renorm = renormalizeToCONF(moved, ord);
+  for (const ord of candidateOrders(staticsF, moversF)) {
+    if (++iter > 4000) break;
     const next = buildState({
       faces: renorm.faces,
-      order: renorm.order,
+      order: ord,
       creases,
       pendingCreases: state.pendingCreases,
       step: state.step + 1,
@@ -107,7 +130,7 @@ export function insideReverseFold(state: FoldedState, op: InsideReverseFoldOp): 
     });
     const report = checkState(next);
     if (!report.ok) continue;
-    if (!isTrivial(ord, moverSet)) return ok(next, report);
+    if (!isTrivial(ord, moverFinal)) return ok(next, report);
     if (!fallback) fallback = next;
   }
   if (fallback) return ok(fallback, checkState(fallback));

@@ -119,16 +119,13 @@ export function demos(): Demo[] {
     // the engine finds a checker-valid layer nesting. The diamond sits in folded space over
     // y ∈ [−1, 0] (top ½,0 · bottom ½,−1 · sides 0,−½ and 1,−½), so the leg creases are
     // given in those coordinates.
-    run('Frog (house → sides to centre)', [
+    run('Frog (base: house → sides to centre)', [
       { label: 'PRECREASE  x=½  (vertical)', op: precrease(V(R(1, 2), R(0)), V(R(1, 2), R(1)), 'right', 'V') },
       { label: 'PRECREASE  y=½  (horizontal)', op: precrease(V(R(0), R(1, 2)), V(R(1), R(1, 2)), 'left', 'V') },
       { label: 'FOLD  top-left corner → centre  (collapse top)', op: foldAll(V(R(1, 2), R(1)), V(R(0), R(1, 2)), 'right', 'V') },
       { label: 'FOLD  top-right corner → centre  (triangle house)', op: foldAll(V(R(1, 2), R(1)), V(R(1), R(1, 2)), 'left', 'V') },
       { label: 'FOLD  left side → centre line (x=¼)', op: foldAll(V(R(1, 4), R(0)), V(R(1, 4), R(1)), 'left', 'V') },
       { label: 'FOLD  right side → centre line (x=¾)', op: foldAll(V(R(3, 4), R(0)), V(R(3, 4), R(1)), 'right', 'V') },
-      { label: 'FOLD ONE_LAYER  bottom-mid → left  (leg, top layer)', op: oneLayer(V(R(1, 2), R(0)), V(R(1, 4), R(1, 2)), 'left', 'V') },
-      { label: 'FOLD ONE_LAYER  bottom-mid → right  (leg, top layer)', op: oneLayer(V(R(1, 2), R(0)), V(R(3, 4), R(1, 2)), 'right', 'V') },
-      { label: 'FLIP  (turn the frog over)', op: flip() },
     ]),
   ];
 }
