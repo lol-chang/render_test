@@ -110,15 +110,20 @@ export function demos(): Demo[] {
       { label: 'FOLD ALL  right ear', op: foldAll(V(R(1, 2), R(1, 2)), V(R(1), R(1)), 'right', 'V') },
       { label: 'FLIP', op: flip() },
     ]),
-    // Jumping frog — step 1 precrease, then collapse the top into a triangle by folding
-    // BOTH top corners to the centre C=(½,½) (each corner lands exactly on C; certified by
-    // Golden #8). All real ops, checker-valid every step. The step 3+ petal/reverse folds
-    // for the legs still need the v2 WATERBOMB_COLLAPSE macro (spec §11).
-    run('Frog — collapse top to triangle', [
+    // Jumping frog — reached the classic preliminary/frog BASE with real ops only, checker-
+    // valid at every step: precrease both midlines, then fold all four corners to the centre
+    // C=(½,½) (each corner lands exactly on C; the corner-to-centre fold is certified by
+    // Golden #8). Result = the diamond preliminary base every frog is built on.
+    // Going further (splaying the four flaps into legs) is a PETAL / INSIDE-REVERSE fold: the
+    // moving point has to tuck BETWEEN existing layers, which a flat v1 fold cannot do — the
+    // engine rightly refuses it (E_BLOCKED). That is the v2 boundary (spec §11).
+    run('Frog base (4 corners → centre)', [
       { label: 'PRECREASE  x=½  (vertical)', op: precrease(V(R(1, 2), R(0)), V(R(1, 2), R(1)), 'right', 'V') },
       { label: 'PRECREASE  y=½  (horizontal)', op: precrease(V(R(0), R(1, 2)), V(R(1), R(1, 2)), 'left', 'V') },
       { label: 'FOLD  top-left corner → centre (½,½)', op: foldAll(V(R(1, 2), R(1)), V(R(0), R(1, 2)), 'right', 'V') },
       { label: 'FOLD  top-right corner → centre (½,½)', op: foldAll(V(R(1, 2), R(1)), V(R(1), R(1, 2)), 'left', 'V') },
+      { label: 'FOLD  bottom-left corner → centre (½,½)', op: foldAll(V(R(0), R(1, 2)), V(R(1, 2), R(0)), 'left', 'V') },
+      { label: 'FOLD  bottom-right corner → centre (½,½)', op: foldAll(V(R(1), R(1, 2)), V(R(1, 2), R(0)), 'right', 'V') },
     ]),
   ];
 }
