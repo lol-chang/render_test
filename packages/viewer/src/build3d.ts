@@ -1,20 +1,20 @@
 /**
- * FoldedState → three.js meshes: spec §8.1 v1.3, the embedding V(state; ε, w).
+ * FoldedState → three.js meshes (spec §8.1). The 2.5D state has no continuous z; the viewer
+ * chooses a per-(face, vertex) height so overlapping layers separate and the paper reads
+ * cleanly. The split is bookkeeping, not physics — same-sheet parts must stay connected.
  *
- * The 2.5D state has NO continuous z; the viewer computes a thickness-aware, slightly-open
- * paper appearance from it — the split is bookkeeping, not physics, so the render must be
- * C0-continuous across every SPLIT edge.
- *
- *   1. Pointwise base height: z(face) = (stack index of face within its spot) × ε. Spots
- *      tile the silhouette, so this pointwise field is globally consistent — no topo sort.
- *   2. Two-tier welding of per-(face, vertex) z, at each folded-space vertex POSITION:
- *      - SPLIT edges weld UNCONDITIONALLY (mean; independent of w) — one physical facet
- *        draping over an underlying stack becomes a continuous ramp.
- *      - folded CREASE edges weld by hinge cluster, blended z = (1−w)·own + w·mean.
- *      - coincident-but-UNattached instances (separate stacked flaps) are never merged.
- *   3. Conforming triangulation: neighbour vertices lying on a face's edge are inserted, so
+ *   1. Base height. A physical SHEET = a SPLIT-connected component of faces; each is drawn
+ *      FLAT at one height = the top stack position it reaches anywhere. So a sheet that is
+ *      topmost over a thick region and continues over a thin one stays flat on top over both
+ *      (no dip that lets a smaller higher piece poke up); the thin region leaves a gap under it.
+ *   2. Conforming triangulation. Neighbour vertices lying on a face's edge are inserted, so
  *      T-junctions (CONF splits that don't propagate across spots) share vertices — no cracks.
- *   4. Edge lines: BOUNDARY + folded CREASE only. SPLIT edges are never drawn. No hinge walls.
+ *   3. Crease weld. At each folded vertex, faces joined through SPLIT/CREASE adjacency are
+ *      pulled toward their mean by w: w=1 fuses folds into continuous paper (Paper preset),
+ *      w=0 lets the crease layers separate (Explode). Same-sheet (SPLIT) parts, already at one
+ *      height, stay connected at every w. Coincident-but-UNattached flaps are never merged.
+ *   4. Edge lines. BOUNDARY + folded CREASE of the visible TOP face only (§7); SPLIT edges and
+ *      buried layers are never drawn. No hinge walls.
  */
 import * as THREE from 'three';
 import type { FoldedState, Face, Vec2, FaceId } from '@origami/core';
@@ -26,10 +26,9 @@ const LINE_COLOR = 0x2b2f36;         // boundary + folded crease overlay
 
 export interface BuildOptions {
   epsilon: number; // "paper thickness" — per-layer z gap
-  // Fold tightness w ∈ [0,1]. SPLIT welding is unconditional (one physical sheet always
-  // stays connected as a ramp — never cut into plates); w only gates the CREASE weld:
-  // w=1 joins folds into continuous paper (Paper preset), w=0 separates the crease layers
-  // so the stack is legible (Explode) while same-sheet parts stay connected.
+  // Fold tightness w ∈ [0,1]: w=1 fuses folds into continuous paper (Paper preset), w=0 lets
+  // the crease layers separate for a legible stack (Explode). Same-sheet parts stay connected
+  // at every w (they already share one height), so nothing is ever cut into floating plates.
   weight: number;
 }
 export interface Built {
@@ -77,12 +76,7 @@ interface FaceGeom { face: Face; verts: Vec2[]; z: number[] } // enriched folded
 export function buildModel(state: FoldedState, opts: BuildOptions): Built {
   const eps = opts.epsilon, w = opts.weight;
 
-  // 1. base height per face. A physical SHEET = a SPLIT-connected component of faces; it is
-  // drawn FLAT at one height = the TOP stack position it reaches anywhere. So a sheet that is
-  // topmost over a 4-layer region and continues over a 2-layer region stays flat on top over
-  // both (the big paper doesn't dip and let a small higher piece poke up); thin regions just
-  // leave an empty gap under that top sheet. (User-chosen "flat top"; the spec's per-spot
-  // ramp is the alternative.) CREASE welding (below) still joins the folds by w.
+  // 1. base height per face = its physical sheet's top stack level × ε (see file header).
   const stackIdx = new Map<FaceId, number>();
   for (const spot of state.spots.values()) spot.stack.forEach((id, i) => stackIdx.set(id, i));
   const sheet = makeUF([...state.faces.keys()]);
@@ -106,7 +100,7 @@ export function buildModel(state: FoldedState, opts: BuildOptions): Built {
   }
   const positions = [...allPos.values()];
 
-  // 3. conforming subdivision: insert any global vertex lying strictly on a face edge
+  // 2. conforming subdivision: insert any global vertex lying strictly on a face edge (T-junctions)
   const fg = new Map<FaceId, FaceGeom>();
   for (const f of state.faces.values()) {
     const poly = folded.get(f.id)!;
@@ -146,29 +140,22 @@ export function buildModel(state: FoldedState, opts: BuildOptions): Built {
     }
   }
 
-  // 2. two-tier weld at each position (tier1 SPLIT always; tier2 CREASE gated by w)
+  // 3. weld: at each vertex, cluster faces joined through SPLIT/CREASE adjacency and pull each
+  // toward the cluster's mean height by w. (Same-sheet SPLIT faces already share a height, so
+  // they only ever weld with equal partners — connected at any w; folds fuse only as w → 1.)
   for (const [k, insts] of instances) {
-    if (insts.length < 2 && !(adj.SPLIT.get(k) || adj.CREASE.get(k))) continue;
+    if (insts.length < 2) continue;
     const here = new Set(insts.map((i) => i.id));
     const viAt = new Map<FaceId, number>(insts.map((i) => [i.id, i.vi]));
-    const zAt = (id: FaceId) => fg.get(id)!.z[viAt.get(id)!]!;
-
-    const weld = (kinds: ('SPLIT' | 'CREASE')[], blend: boolean) => {
-      const uf = makeUF(here);
-      for (const kind of kinds) for (const [a, b] of adj[kind].get(k) ?? []) {
-        if (here.has(a) && here.has(b)) uf.union(a, b);
-      }
-      for (const grp of uf.groups()) {
-        if (grp.length < 2) continue;
-        const mean = grp.reduce((s, id) => s + zAt(id), 0) / grp.length;
-        for (const id of grp) {
-          const g = fg.get(id)!, vi = viAt.get(id)!;
-          g.z[vi] = blend ? (1 - w) * g.z[vi]! + w * mean : mean;
-        }
-      }
-    };
-    weld(['SPLIT'], false);            // tier 1: unconditional
-    weld(['SPLIT', 'CREASE'], true);   // tier 2: hinge clusters, w-blended
+    const uf = makeUF(here);
+    for (const kind of ['SPLIT', 'CREASE'] as const) {
+      for (const [a, b] of adj[kind].get(k) ?? []) if (here.has(a) && here.has(b)) uf.union(a, b);
+    }
+    for (const grp of uf.groups()) {
+      if (grp.length < 2) continue;
+      const mean = grp.reduce((s, id) => s + fg.get(id)!.z[viAt.get(id)!]!, 0) / grp.length;
+      for (const id of grp) { const g = fg.get(id)!, vi = viAt.get(id)!; g.z[vi] = (1 - w) * g.z[vi]! + w * mean; }
+    }
   }
 
   // 4. build meshes + edge lines
@@ -235,7 +222,7 @@ function addFaceSurface(group: THREE.Group, g: FaceGeom, box: THREE.Box3, tmp: T
   for (let i = 0; i < xy.length; i++) box.expandByPoint(tmp.set(xy[i]!.x, xy[i]!.y, g.z[i]!));
 }
 
-/** Draw BOUNDARY + folded CREASE edges only (never SPLIT), at the welded height. */
+/** Draw BOUNDARY + folded CREASE edges of the visible TOP face only (§7); never SPLIT. */
 function addEdgeLines(group: THREE.Group, state: FoldedState, fg: Map<FaceId, FaceGeom>): void {
   const pts: number[] = [];
   // z of face `id` at folded point p: exact-key hit, else the nearest enriched vertex's z

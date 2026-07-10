@@ -111,10 +111,8 @@ function clearCurrent() { if (currentObj) { scene.remove(currentObj); disposeObj
 
 function showState(state: FoldedState, reframe = false) {
   clearCurrent();
-  // Explode = layer-order pedagogy: force w=0 so CREASE folds separate into visible layers,
-  // but keep welding ON — the SPLIT tier is unconditional, so one physical sheet spanning
-  // stack levels stays CONNECTED as a ramp (never cut into floating plates). Paper preset
-  // uses the slider w (continuous paper at w=1).
+  // Explode = layer-order pedagogy: force w=0 so the crease layers separate into a legible
+  // stack (same-sheet parts stay connected regardless). Paper preset uses the slider w.
   const built = buildModel(state, { epsilon: epsFor(), weight: exploded ? 0 : weight });
   scene.add(built.object);
   currentObj = built.object;
