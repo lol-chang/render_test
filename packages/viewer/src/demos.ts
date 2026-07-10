@@ -110,14 +110,15 @@ export function demos(): Demo[] {
       { label: 'FOLD ALL  right ear', op: foldAll(V(R(1, 2), R(1, 2)), V(R(1), R(1)), 'right', 'V') },
       { label: 'FLIP', op: flip() },
     ]),
-    // Jumping frog — step 1 precrease pattern is v1; step 2+ (waterbomb collapse, petal/
-    // reverse folds) need the v2 WATERBOMB_COLLAPSE macro (spec §11), so this demo stops at
-    // the crease pattern. The frog-LEG fold class is certified separately by Golden #8.
-    run('Frog — step 1 precrease (v1 limit)', [
+    // Jumping frog — step 1 precrease, then collapse the top into a triangle by folding
+    // BOTH top corners to the centre C=(½,½) (each corner lands exactly on C; certified by
+    // Golden #8). All real ops, checker-valid every step. The step 3+ petal/reverse folds
+    // for the legs still need the v2 WATERBOMB_COLLAPSE macro (spec §11).
+    run('Frog — collapse top to triangle', [
       { label: 'PRECREASE  x=½  (vertical)', op: precrease(V(R(1, 2), R(0)), V(R(1, 2), R(1)), 'right', 'V') },
       { label: 'PRECREASE  y=½  (horizontal)', op: precrease(V(R(0), R(1, 2)), V(R(1), R(1, 2)), 'left', 'V') },
-      { label: 'PRECREASE  diag (0,1)–(1,½)', op: precrease(V(R(0), R(1)), V(R(1), R(1, 2)), 'left', 'V') },
-      { label: 'PRECREASE  diag (1,1)–(0,½)', op: precrease(V(R(1), R(1)), V(R(0), R(1, 2)), 'right', 'V') },
+      { label: 'FOLD  top-left corner → centre (½,½)', op: foldAll(V(R(1, 2), R(1)), V(R(0), R(1, 2)), 'right', 'V') },
+      { label: 'FOLD  top-right corner → centre (½,½)', op: foldAll(V(R(1, 2), R(1)), V(R(1), R(1, 2)), 'left', 'V') },
     ]),
   ];
 }
