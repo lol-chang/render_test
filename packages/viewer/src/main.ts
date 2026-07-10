@@ -193,6 +193,7 @@ function goToStep(n: number, allowAnim: boolean) {
 }
 
 function selectDemo(i: number, stepOverride?: number) {
+  i = Number.isFinite(i) ? Math.max(0, Math.min(allDemos.length - 1, i)) : 0; // clamp bad hash
   anim = null; selectedFace = null;
   current = allDemos[i]!;
   const last = current.states.length - 1;
