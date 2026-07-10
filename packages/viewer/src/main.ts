@@ -17,6 +17,7 @@ import {
 } from '@origami/core';
 import { demos, type Demo } from './demos.js';
 import { buildModel } from './build3d.js';
+import { buildFoldAnim, easeInOut, type FoldAnim } from './animate.js';
 
 const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -64,6 +65,7 @@ let topView = true; // spec §8.1: default orthographic top view (matches diagra
 let currentObj: THREE.Object3D | null = null;
 let modelCenter = new THREE.Vector3();
 let modelExtent = 1;
+let anim: { obj: FoldAnim; t0: number; dur: number; post: FoldedState } | null = null;
 
 // interactive fold selections
 let selectedFace: FaceId | null = null;
@@ -162,16 +164,34 @@ function rebuildHistory() {
   });
 }
 
-// ---- navigation ---- (§8.1 static build; fold animation is Phase D, deferred → snap)
-function goToStep(n: number, _allowAnim: boolean) {
+// ---- navigation ----
+function goToStep(n: number, allowAnim: boolean) {
   n = Math.max(0, Math.min(current.states.length - 1, n));
+  const forwardOne = n === step + 1;
+  const pre = current.states[step]!;
+  const post = current.states[n]!;
   step = n; stepRange.value = String(step);
-  showState(current.states[n]!);
+  const op = post.lastOp;
+  // §8.2: animate a single forward FOLD (movers rotate about the hinge), then snap to post.
+  if (allowAnim && forwardOne && op && op.type === 'FOLD') {
+    const pr = planFold(pre, op as FoldOp);
+    if ('plan' in pr) {
+      clearCurrent();
+      const a = buildFoldAnim(pr.plan, 0.02);
+      scene.add(a.object); currentObj = a.object;
+      anim = { obj: a, t0: performance.now(), dur: 650, post };
+      info.textContent = `${current.labels[step] ?? ''}\n folding…`;
+      stepLabel.textContent = `${step}/${current.states.length - 1}`;
+      return;
+    }
+  }
+  anim = null;
+  showState(post);
   rebuildHistory();
 }
 
 function selectDemo(i: number, stepOverride?: number) {
-  selectedFace = null;
+  anim = null; selectedFace = null;
   current = allDemos[i]!;
   const last = current.states.length - 1;
   step = stepOverride === undefined || stepOverride < 0 ? last : Math.min(last, stepOverride);
@@ -339,6 +359,11 @@ window.addEventListener('resize', resize);
 
 function tick() {
   requestAnimationFrame(tick);
+  if (anim) {
+    const t = Math.min(1, (performance.now() - anim.t0) / anim.dur);
+    anim.obj.setAngle(easeInOut(t) * Math.PI);
+    if (t >= 1) { const post = anim.post; anim = null; showState(post); rebuildHistory(); }
+  }
   controls.update();
   renderer.render(scene, camera as THREE.Camera);
 }
