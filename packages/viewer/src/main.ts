@@ -1,9 +1,9 @@
 /**
  * Origami folding simulator — viewer entry point (spec §8).
  *
- * - static build + continuous-paper rendering (§8.1)
- * - fold animation, movers rotate about the hinge 0→π then snap to the verified
- *   post-state (§8.2)
+ * - one continuous sheet, deformed through the model's fold history (§8.1)
+ * - fold animation: the same mesh with the last fold's angle run 0→π, so the final
+ *   frame IS the verified post-state and nothing snaps (§8.2)
  * - interaction (§8.3): hover a face to inspect its stack; in the Interactive model,
  *   click a face, pick an EXACT candidate axis (enumerateAxisCandidates), and get a
  *   live green/red dry-run (movers green if valid, witness red if not) before applying.
@@ -16,8 +16,8 @@ import {
   type FoldedState, type FoldOp, type AxisCandidate, type FaceId, type Face,
 } from '@origami/core';
 import { demos, type Demo } from './demos.js';
-import { buildModel } from './build3d.js';
-import { buildFoldAnim, easeInOut, type FoldAnim } from './animate.js';
+import { buildModel, type Built } from './build3d.js';
+import { easeInOut } from './animate.js';
 
 const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -63,9 +63,10 @@ let step = 0;
 let exploded = false;
 let topView = true; // spec §8.1: default orthographic top view (matches diagrams / Π(S))
 let currentObj: THREE.Object3D | null = null;
+let currentBuilt: Built | null = null;
 let modelCenter = new THREE.Vector3();
 let modelExtent = 1;
-let anim: { obj: FoldAnim; t0: number; dur: number; post: FoldedState } | null = null;
+let anim: { built: Built; t0: number; dur: number } | null = null;
 
 // interactive fold selections
 let selectedFace: FaceId | null = null;
@@ -74,10 +75,30 @@ let mode: 'ALL' | 'ONE_LAYER' = 'ALL';
 let direction: 'V' | 'M' = 'V';
 let side: 'left' | 'right' = 'left';
 
-// V(state; ε, w) — spec §8.1. Paper preset default: w=1, ε=0.004. Explode multiplies ε.
-let epsilon = 0.004;
-let weight = 1;
-const epsFor = () => epsilon * (exploded ? 12 : 1);
+// V(state; ε) — spec §8.1. ε, the layer gap, is the only shape parameter: a fold's turn radius
+// is half the gap for the innermost layer and grows by ε/2 per layer it wraps.
+// Explode spreads the stack: NOT a fixed multiple of ε, because a deep, narrow stack (8 layers
+// on a ⅛-wide strip) then stands taller than the paper is wide, which is not something one
+// sheet of paper can do. Spread it over about the model's smaller silhouette dimension instead.
+let epsilon = 0.006;
+function epsFor(state: FoldedState): number {
+  if (!exploded) return epsilon;
+  let depth = 0;
+  for (const sp of state.spots.values()) depth = Math.max(depth, sp.stack.length - 1);
+  if (depth <= 0) return epsilon * 12;
+  let lo = { x: Infinity, y: Infinity }, hi = { x: -Infinity, y: -Infinity };
+  for (const f of state.faces.values()) for (const p of foldedPoly(f as Face)) {
+    const x = p.x.toNumber(), y = p.y.toNumber();
+    lo = { x: Math.min(lo.x, x), y: Math.min(lo.y, y) };
+    hi = { x: Math.max(hi.x, x), y: Math.max(hi.y, y) };
+  }
+  // Bound the WHOLE stack, not just the gap. One sheet legitimately runs from level 0 to level
+  // 6 (the cup), so every layer of separation is a wall that sheet has to climb; spread them
+  // until the stack is as tall as the model is wide and the paper stops reading as paper at
+  // all. An eighth of the silhouette is enough to see the order and still see a folded sheet.
+  const minDim = Math.max(1e-6, Math.min(hi.x - lo.x, hi.y - lo.y));
+  return Math.max(epsilon, Math.min(0.03, minDim / depth, 0.12 / depth));
+}
 const isInteractive = () => current === INTERACTIVE;
 
 // ---- DOM ----
@@ -107,23 +128,29 @@ function disposeObj(obj: THREE.Object3D) {
     if (Array.isArray(mat)) mat.forEach((x) => x.dispose()); else mat?.dispose?.();
   });
 }
-function clearCurrent() { if (currentObj) { scene.remove(currentObj); disposeObj(currentObj); currentObj = null; } }
+function clearCurrent() {
+  if (currentObj) { scene.remove(currentObj); disposeObj(currentObj); currentObj = null; currentBuilt = null; }
+}
 
 function showState(state: FoldedState, reframe = false) {
   clearCurrent();
-  // Explode = layer-order pedagogy: force w=0 so the crease layers separate into a legible
-  // stack (same-sheet parts stay connected regardless). Paper preset uses the slider w.
-  const built = buildModel(state, { epsilon: epsFor(), weight: exploded ? 0 : weight });
+  // Explode = layer-order pedagogy: the layer gap is the ONLY thing it stretches, and the fold
+  // geometry follows it — the turns simply get wider, so the stack stays a stack of one sheet.
+  const built = buildModel(state, { epsilon: epsFor(state) });
   scene.add(built.object);
   currentObj = built.object;
+  currentBuilt = built;
   modelCenter = built.center; modelExtent = built.extent;
-  const report = checkState(state);
   stepLabel.textContent = `${step}/${current.states.length - 1}`;
-  info.textContent =
-    `${current.labels[step] ?? ''}\nfaces ${state.faces.size} · layers/spots ${state.spots.size}\n` +
-    `checker: ${report.ok ? '✅ valid (I1–I6)' : '❌ ' + report.results.filter((r) => !r.pass).map((r) => r.invariant).join(',')}`;
+  info.textContent = infoText(state);
   if (reframe) frameCamera();
   if (isInteractive()) refreshFoldUI(state);
+}
+
+function infoText(state: FoldedState): string {
+  const report = checkState(state);
+  return `${current.labels[step] ?? ''}\nfaces ${state.faces.size} · layers/spots ${state.spots.size}\n` +
+    `checker: ${report.ok ? '✅ valid (I1–I6)' : '❌ ' + report.results.filter((r) => !r.pass).map((r) => r.invariant).join(',')}`;
 }
 
 function frameCamera() {
@@ -139,15 +166,18 @@ function frameCamera() {
   controls.update();
 }
 
-/** set emissive highlight on faces by id (others cleared) */
+/**
+ * Set emissive highlight on faces by id (others cleared). A sheet is one mesh with one
+ * material per fragment (geometry groups), so the tint still lands on exactly the faces asked
+ * for even though the paper is drawn as a single continuous surface.
+ */
 function highlight(map: Map<string, number>) {
   currentObj?.traverse((o) => {
     const m = o as THREE.Mesh;
-    const id = m.userData?.faceId as string | undefined;
-    const mat = m.material as THREE.MeshStandardMaterial | undefined;
-    if (!id || !mat || !mat.emissive) return;
-    const c = map.get(id);
-    mat.emissive.setHex(c ?? 0x000000);
+    const frags = m.userData?.fragIds as string[] | undefined;
+    const mats = m.material as THREE.MeshStandardMaterial[] | undefined;
+    if (!frags || !Array.isArray(mats)) return;
+    frags.forEach((id, i) => mats[i]?.emissive?.setHex(map.get(id) ?? 0x000000));
   });
 }
 
@@ -173,23 +203,17 @@ function goToStep(n: number, allowAnim: boolean) {
   const pre = current.states[step]!;
   const post = current.states[n]!;
   step = n; stepRange.value = String(step);
-  const op = post.lastOp;
-  // §8.2: animate a single forward FOLD (movers rotate about the hinge), then snap to post.
-  if (allowAnim && forwardOne && op && op.type === 'FOLD') {
-    const pr = planFold(pre, op as FoldOp);
-    if ('plan' in pr) {
-      clearCurrent();
-      const a = buildFoldAnim(pr.plan, 0.02);
-      scene.add(a.object); currentObj = a.object;
-      anim = { obj: a, t0: performance.now(), dur: 650, post };
-      info.textContent = `${current.labels[step] ?? ''}\n folding…`;
-      stepLabel.textContent = `${step}/${current.states.length - 1}`;
-      return;
-    }
-  }
+  void pre;
   anim = null;
   showState(post);
   rebuildHistory();
+  // §8.2: a forward fold is the SAME mesh with the last fold's angle run 0 → π. The last frame
+  // is the committed model, so there is nothing to snap to when it finishes.
+  if (allowAnim && forwardOne && currentBuilt?.animatable) {
+    currentBuilt.setProgress(0);
+    anim = { built: currentBuilt, t0: performance.now(), dur: 650 };
+    info.textContent = `${current.labels[step] ?? ''}\n folding…`;
+  }
 }
 
 function selectDemo(i: number, stepOverride?: number) {
@@ -293,7 +317,9 @@ function pick(ev: PointerEvent): string | null {
   if (!currentObj) return null;
   const hits = raycaster.intersectObject(currentObj, true);
   for (const h of hits) {
-    const id = h.object.userData?.faceId as string | undefined;
+    // one mesh per facet now, so the fragment (and thus the layer) comes from the triangle hit
+    const ids = h.object.userData?.faceIds as string[] | undefined;
+    const id = ids && h.faceIndex != null ? ids[h.faceIndex] : undefined;
     if (id) return id;
   }
   return null;
@@ -326,17 +352,15 @@ $('topView').addEventListener('click', (e) => { topView = (e.target as HTMLButto
 $('explode').addEventListener('click', (e) => { exploded = (e.target as HTMLButtonElement).classList.toggle('active'); showState(frameState()); });
 axisSel.addEventListener('change', dryRun);
 
-// V(state; ε, w) sliders + presets (§8.1 item 5)
+// V(state; ε) slider + presets (§8.1 item 5)
 const epsRange = $<HTMLInputElement>('eps');
-const wRange = $<HTMLInputElement>('weight');
-const epsVal = $('epsVal'), wVal = $('wVal');
-function syncEmbed() { epsVal.textContent = epsilon.toFixed(4); wVal.textContent = weight.toFixed(2); }
+const epsVal = $('epsVal');
+function syncEmbed() { epsVal.textContent = epsilon.toFixed(4); }
 epsRange.addEventListener('input', () => { epsilon = Number(epsRange.value); syncEmbed(); showState(frameState()); });
-wRange.addEventListener('input', () => { weight = Number(wRange.value); syncEmbed(); showState(frameState()); });
 function applyPreset(paper: boolean) {
-  weight = 1; epsilon = 0.004; exploded = !paper;
+  epsilon = 0.006; exploded = !paper;
   $('explode').classList.toggle('active', exploded);
-  epsRange.value = String(epsilon); wRange.value = String(weight); syncEmbed();
+  epsRange.value = String(epsilon); syncEmbed();
   showState(frameState());
 }
 $('presetPaper').addEventListener('click', () => applyPreset(true));
@@ -364,8 +388,8 @@ function tick() {
   requestAnimationFrame(tick);
   if (anim) {
     const t = Math.min(1, (performance.now() - anim.t0) / anim.dur);
-    anim.obj.setAngle(easeInOut(t) * Math.PI);
-    if (t >= 1) { const post = anim.post; anim = null; showState(post); rebuildHistory(); }
+    anim.built.setProgress(easeInOut(t));
+    if (t >= 1) { anim = null; info.textContent = infoText(frameState()); }
   }
   controls.update();
   renderer.render(scene, camera as THREE.Camera);
@@ -376,8 +400,7 @@ const hash = new URLSearchParams(location.hash.slice(1));
 if (hash.get('view') === 'persp') { topView = false; $('topView').classList.remove('active'); }
 if (hash.get('explode') === '1') { exploded = true; $('explode').classList.add('active'); }
 if (hash.has('eps')) epsilon = Number(hash.get('eps'));
-if (hash.has('w')) weight = Number(hash.get('w'));
 $('topView').classList.toggle('active', topView);
-epsRange.value = String(epsilon); wRange.value = String(weight); syncEmbed();
+epsRange.value = String(epsilon); syncEmbed();
 selectDemo(hash.has('demo') ? Number(hash.get('demo')) : 1, hash.has('step') ? Number(hash.get('step')) : undefined);
 tick();

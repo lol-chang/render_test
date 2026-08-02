@@ -58,8 +58,8 @@ packages/
     src/io/             # JSON schema, FOLD-format import/export
     test/               # vitest: unit + property + golden regression
   viewer/               # three.js + Vite app. Depends on core. UI only.
-    src/build3d/        # state → meshes (layer z-offsets, two-sided materials)
-    src/animate/        # continuous fold animation of one op
+    src/build3d/        # state → ONE mesh: the source square, folded (two-sided materials)
+    src/animate/        # timing curve; the fold itself is build3d's setProgress
     src/interact/       # face picking, axis candidates, validity preview
 ```
 
@@ -593,81 +593,188 @@ diagrams. This module is core (string output), no DOM.
 
 ## 8. three.js viewer (`viewer/`)
 
-### 8.1 Static build (`build3d`) — the embedding function `V(state; ε, w)`
+### 8.1 Static build (`build3d`) — the embedding function `V(state; ε)`
 
-The viewer realizes the D6 claim constructively: a 3D, thickness-aware, slightly-open
-paper appearance computed from the 2.5D state alone. **Zero core changes; never move
-3D poses into the state** (it would destroy exactness, G2, the invariants, and L1/L2).
+**The engine places the paper; the renderer only rounds off the joins.** The layer model is
+flat plates — a face lies at its exact folded polygon, at the height its index in its own
+spot's stack gives it — and that IS the verified state. `V` draws exactly that, and adds
+curves only where two faces are JOINED, because that is the one thing flat plates cannot show:
+real paper turns there instead of stopping. **Zero core changes; never move 3D poses into the
+state** (it would destroy exactness, G2, the invariants, and L1/L2).
 
-Known artifacts this section exists to prevent: (i) per-face-constant z produces cliffs
-and apparent separation at creases; (ii) **CONF fragmentation leaking into the render**
-— the engine splits faces for layer bookkeeping, and the viewer must reconstruct the
-*physical* mesh from that bookkeeping mesh, or flat paper shows spurious cliffs, hairline
-cracks, and patchwork edge lines. The state has no separation (I1); naive rendering
-creates it.
+Known artifacts this section exists to prevent: (i) per-face-constant z produces cliffs and
+apparent separation at creases; (ii) **CONF fragmentation leaking into the render** — the
+engine splits faces for layer bookkeeping, and the render must not show the bookkeeping mesh,
+or flat paper shows spurious cliffs, hairline cracks, and patchwork edge lines. The state has
+no separation (I1); naive rendering creates it.
 
-**Guiding rule (v1.3): the split is bookkeeping, not physics. A physical facet =
-a connected component of faces under SPLIT-edge adjacency; the render must be C0
-continuous across every SPLIT edge, unconditionally.**
+1. **One mesh, in material space, conforming by construction.** There is exactly one
+   `BufferGeometry`: a tessellation of the source square. It is cut into convex cells by every
+   face boundary, so each cell lies wholly inside one face — its exact position and height are
+   therefore well defined and no triangle straddles a join. Refinement marks EDGES and splits
+   each triangle by how many of its edges are marked (1 → 2, 2 → 3, 3 → 4) with a shared
+   midpoint cache, so a neighbour is never left with a vertex hanging in the middle of its edge.
+   Sizing is graded — fine on a join, coarsening away from one — because flat paper is placed by
+   an exact isometry and needs no resolution, while a curve is only as round as its chords. The
+   `uv` attribute carries each vertex's material coordinate. **Because it is one surface, there
+   is nothing to stitch**: the seams, corner walls, T-junctions and hollow hinges that the
+   v1.3/v1.4 assembly of slabs, ribbons and caps kept producing cannot arise.
 
-1. **Pointwise heights (v1.3 — replaces global topo-levels).** For each face, base
-   height `z = stackIndex(face within its spot) × ε` — i.e., the number of faces
-   strictly below at that region. Spots tile the silhouette, so this pointwise field is
-   globally consistent; **no topological sort is needed** (v1.2's global levels could
-   assign different heights to flat-connected pieces of one physical facet — the false
-   claim "SPLIT edges agree already" is hereby corrected). Stacking correctness is
-   inherited pointwise from the stacks themselves.
-2. **Two-tier welding of per-(face, vertex) z.**
-   - **SPLIT edges: weld unconditionally** (mean of the two sides; independent of `w`).
-     Same physical paper — a facet draping over the edge of an underlying stack becomes
-     a continuous ramp, which is exactly what real paper does.
-   - **Folded CREASE edges: hinge-cluster weld with weight `w`** (v1.2 rule retained):
-     at each folded-space vertex position, cluster (face, vertex) instances connected
-     through folded-CREASE adjacency; instance z = `(1−w)·own + w·clusterMean`. `w`
-     controls only the fold opening.
-   - **Never merge** coincident-but-unattached instances (stacked separate flaps).
-   - **No hinge walls.** Vertical quads bridging layers along creases
-     (`addHingeWalls`-style) are forbidden: welding *is* the join; walls read as
-     extruded boxes, not paper. Delete any existing wall code when porting v1.3.
-3. **Conforming triangulation (kills hairline cracks).** CONF splits do not propagate
-   across spot boundaries, leaving T-junctions. When triangulating a face, insert every
-   neighbor vertex lying on its boundary (or weld by exact position clustering) so
-   adjacent pieces share vertices.
-4. **Edge-line policy.** Draw only `BOUNDARY` and folded `CREASE` edges (view-dependent
-   styling per §7). **Never draw SPLIT edges** — they are bookkeeping, invisible on real
-   paper. Use flat/unlit-leaning materials so welded ramps don't produce shading seams.
-5. **UI parameters & presets.** Sliders: `ε` ("paper thickness", log scale
-   [0.001, 0.05]) and `w` ("fold tightness"). **Defaults: w = 1, ε = 0.004**
-   (real paper thickness/size ≈ 5×10⁻⁴; slight exaggeration for readability).
-   Presets: **Paper** (w = 1, ε = 0.004, explode off) — *all paper figures use this* —
-   and **Explode** (a separate mode multiplying gaps; layer-order pedagogy only,
-   never in figure screenshots).
-6. **Acceptance (ties V to the verified renderer).** At the Paper preset, for every
-   golden model: (a) top-orthographic screenshot overlays its Π(S) SVG raster within a
-   small pixel-diff tolerance; (b) zoomed inspection shows **no cracks anywhere** —
-   along creases, around fold corners, and across SPLIT boundaries inside flat facets;
-   (c) no visible line where a SPLIT edge lies.
-7. **Optional polish.** Along creases with large stack-index gap, a short hinge ribbon
-   (2–3 segment curved strip) so the folded edge reads as wrapped paper.
-8. **v2 (only if figures demand it).** Near-flat relaxed pose via a small spring solver
-   (cf. Ghassaei's Origami Simulator). At interior vertices crease angles are coupled by
-   loop closure, so uniform opening violates isometry — exact near-flat rigid poses are
-   solver territory; v1's perceptual approximation is the right scope.
-- Materials: `DoubleSide`, front/back colors by `det(T_f)` (white back, colored front).
-- Edge lines: crease/boundary overlay with view-dependent styling consistent with §7.
+2. **Everything outside a join is EXACT.** A material point p on face f is drawn at
+   `applyIso(f.T, p)` horizontally and at `level(f) × ε` vertically — to the last decimal, not
+   approximately. The top view is Π(S) by construction rather than by luck, nothing
+   accumulates, and `test/mesh.test.ts` checks it directly against the state.
+
+3. **A CREASE becomes a U-turn.** The two layers it joins lie on the SAME side of the crease
+   line, Δz apart, so the paper doubles back: a semicircle of radius Δz/2 whose ends leave both
+   layers tangentially, drawn from a band of material π·Δz/4 deep on each side. Turns that nest
+   share **one centre**, so they are concentric and the layer nested inside really is inside,
+   which is what a folded edge shows. (Giving each its own centre separates the centres by more
+   than the radius between them, and each inner turn then pokes out through the one that should
+   enclose it. Shipped once; visible immediately.)
+
+   **The centre sits one OUTERMOST RADIUS in from the fold line**, so that outermost rim lands
+   exactly ON the line — where the engine says the paper ends — and the tighter turns sit back
+   behind it by the paper wrapped around them. Put the centre at the far side of the band
+   instead and every rim comes out δ − r short: the folded edges are all drawn inside the
+   computed outline, no two layers' rims agree, and since a short rim is an outward push, a
+   crease meeting the sheet's border at an angle flicks the corner out past that border. The
+   band is then wider than the turn needs and the remainder runs FLAT out to where the plate
+   resumes, with material split between arc and flat in proportion to their lengths so the band
+   stretches by one factor throughout — 2(π−1)/π ≈ 1.36 at full size. That stretch is the price
+   of the rim landing on the line: a turn is only as long as its material if the plates retreat
+   by π·r/2, and exact plates are the one thing the renderer may not trade away.
+
+   **Turns nest only where one's LAYER SPAN contains another's**, and the centre comes from that
+   ENCLOSER — not from the widest turn on the fold line. Two turns whose spans are disjoint are
+   separate folds that merely land on the same line; tying them to a common centre drags the
+   shallower one a layer gap in behind a turn that does not enclose it and steps the folded edge
+   (the rolling fold grew an ear at its outer end). Band width is likewise each crease's own,
+   which also stops a shallow turn inheriting a deep one's wide band and eating the plate.
+
+   **Height is ONE FIELD over the material, not a sum of per-face corrections.** Every face
+   pulls the sheet toward its own level with a reach of its deepest join, and the height at a
+   point is the weighted average of the faces that reach it: exactly the engine's level deep
+   inside a face, the midpoint at a crease, and a smooth spiral where creases CROSS and four
+   faces reach at once. Summing per-face corrections instead tears the paper: two faces meeting
+   at a crease near a crossing correct toward DIFFERENT third faces — a three-layer turn on one
+   side, a one-layer turn on the other — so they disagree by ε on the very edge they share, and
+   on the cup that ripped one triangle to 118× its own area at every crossing. A field cannot
+   disagree with itself. The weight is not free either: it must reproduce the U-turn's own
+   height profile, `w = (1−s)/(1+s)` with `s = sin(π·d/2δ)`. A smoothstep there stalls at the
+   crease and crushes the paper into the fold by 300×.
+
+   The turn's sideways lean FADES OUT where a crease ends inside the paper, so where two
+   creases cross the fold goes crisp instead of fighting the crease it meets. Ends on the
+   square's outline are not faded — nothing crosses there and the fold must stay round to the
+   edge of the sheet.
+
+   The lean is instead held below THE ROOM THE PAPER ACTUALLY HAS: how deep the shallower of the
+   two faces runs, out of the join, at that point along it. A lean is only payable where there
+   is paper to pay with, and running a crease into the border at an angle leaves a wedge
+   shallower than the lean, which carries the corner off the sheet and hangs a sliver past it.
+   Measuring the room is what tells that apart from a crease ending SQUARE against the border,
+   which has a full plate's depth to its last point — fade the turn out there (the cheap way to
+   stop the sliver) and every rim flares back to the fold line over the last band-width, an ear
+   on the end of the model. A fold's cross section at the border is the same cross section as in
+   the middle. Both faces are measured and the smaller wins, so the two sides of a crease always
+   agree and the sheet cannot part along it.
+
+   **A join may never claim more than a small fraction of the paper** (4 % of the square, and a
+   third of the face it sits on). THE FLAT PLATES ARE THE MODEL: a face has to read as a stiff
+   flat sheet at the height the engine gave it. Without the cap the bands grow with ε, so
+   Explode turned every face into one continuous blob with no flat paper left anywhere; with
+   it, the plates stay flat and the joins become the narrow stretched ribbons an exploded
+   diagram wants. When the cap cannot hold a nest's outermost turn, EVERY turn behind that same
+   encloser is drawn at the ONE same reduced scale, so the nest keeps its order — the outer
+   still wrapping the inner — as ribbons inside the band rather than loops swinging out past the
+   fold line. (Scaling them separately is what separates their centres again.) And a
+   face only reaches out THROUGH ITS OWN JOINS, never in every direction: reaching by plain
+   distance lets it jump a neighbour thinner than the band and drag that level into paper it
+   does not touch, which waved every plate once the layers were apart.
+
+4. **A SPLIT with a level change becomes a drape.** One sheet crossing the edge of the pile
+   beneath it stays flat on the pile right up to the cut and falls away beyond it on an S-curve
+   that leaves both levels flat. (A facet legitimately spans many levels — in the cup, 0 to 6 —
+   and CONF cuts it exactly where the level changes, so the engine says precisely where this
+   happens.)
+
+5. **The band's material is reparametrised onto the curve; it does NOT preserve length, and
+   that is the point.** The v1.5 build folded the sheet the way paper actually folds — arcs
+   consuming material, layers ending short by what they spent going round — and every quantity
+   then depended on every other: layers drifted from where the engine put them, the drift
+   accumulated fold over fold, flat paper strained at corners, and pinning any one of them
+   broke another. A stack of layers with THICKNESS genuinely cannot fold flat; the material
+   does not add up. Letting a few millimetres of paper stretch inside a bend buys back
+   exactness everywhere else, and nothing outside the band can tell.
+
+6. **Two skins, one surface.** The sheet's normal genuinely turns over where the paper does, so
+   a `FrontSide` material always shows the source square's +z side and a `BackSide` material
+   always the other: two meshes over one geometry, and the paper's two colours follow it around
+   every fold with nothing to keep in sync. Per-fragment needs — dry-run tinting, hover,
+   picking — are served by geometry *groups* keyed on the faces inside that one geometry.
+
+7. **Edge-line policy.** Draw `BOUNDARY` and folded `CREASE` edges; **never SPLIT edges** —
+   they are bookkeeping, invisible on real paper. A drawn line is a chain of MESH EDGES lying
+   along the crease's material segment, so it is on the surface by construction and follows
+   every curve it crosses. Unfolded PRECREASE marks are dashed. Hidden lines need no policy:
+   the paper occludes them.
+
+8. **UI parameters & presets.** One slider: `ε` ("layer gap", [0.001, 0.05]), **default 0.006**.
+   It is the only shape parameter — layers Δz apart are joined by a semicircle of radius Δz/2,
+   so turns nested at one crease touch without overlapping. A separate "hinge radius" knob is
+   not a free parameter but a contradiction: insisting on radius R forces the two layers it
+   joins to sit 2R apart, which *is* the layer gap, and setting it independently inflates the
+   stack by 2R per fold. (Shipped once, in v1.4, as `bend`.) Preset **Explode** spreads the
+   stack over about the silhouette's smaller dimension, `ε = clamp(minDim / depth, ε, 0.05)` —
+   never a fixed multiple of ε, since eight layers on a ⅛-wide strip would then stand three
+   times taller than the paper is wide. It bounds the WHOLE STACK, not just the gap
+   (`ε ≤ 0.12/depth`): one sheet legitimately runs from level 0 to level 6, so every layer of
+   separation is a wall that sheet has to climb, and spread far enough it stops reading as
+   paper at all. Layer-order pedagogy only, never in figure screenshots.
+
+9. **Acceptance — measured, not eyeballed** (`packages/viewer/test/mesh.test.ts`, every golden
+   model × {paper, exploded, thin}). The renderer reports which vertices it left alone
+   (`Built.settled`), so the tests check its own claim rather than guess at band widths:
+   - *the render IS the verified state*: every settled vertex is at the engine's exact position,
+     within float32. This is the check the v1.5 simulation could never have passed.
+   - *unbroken surface*: every interior triangle edge is used by exactly two triangles; an edge
+     used once must lie on the square's own outline, which `uv` settles exactly. (This replaced
+     the v1.4 watertight test, which asked whether a SOLID was closed — the right question for a
+     build made of slabs, meaningless for one open sheet.)
+   - *layer height*: every face is drawn at EXACTLY its stack index × ε.
+   - *no stretching outside a join*, and *the rounding stays local*: no point is moved further
+     from the engine's position than the join it belongs to is deep, which is what stops a
+     "pretty" curve from quietly becoming the model.
+   - *the paper does not crumple*: triangle AREA on screen against area on the flat square.
+     Origami paper is stiff, and length alone does not catch this — a triangle can keep all
+     three edge lengths and still be sheared into a spike. Stretch is what shows (paper pulled
+     thin reads as a rip), so stretch is bounded and so is the share of the sheet carrying any;
+     compression is left alone, because a compressed band draws the same clean curve and some
+     of it is unavoidable where nested turns share a centre.
+   - *no paper hangs past the outline the engine computed*, and none falls short of it either.
+     The plates being exact says nothing about the folded EDGES between them, and seen from
+     above a folded model is mostly rims.
+   - *folded edges nest the way a folded edge nests*: a turn nothing encloses reaches the fold
+     line exactly, a turn tucked inside another sits strictly further in, and along a fold that
+     runs border to border the rim does not move. This is the check that catches an "ear" —
+     paper standing somewhere no real sheet folded this way would put it.
+   - *animation*: t = 1 reproduces the committed build exactly.
 - Camera: default **orthographic top view** (matches diagrams) + orbit controls toggle.
 
 ### 8.2 Fold animation (`animate`)
 
-- Animating op `FOLD`: take the *pre* state; movers rotate rigidly about the folded-space
-  hinge from 0 → π (ease-in-out). Per Lemmas L1/L2 **no collision detection is needed** —
-  the discrete engine already guaranteed feasibility; the animation is presentation only.
-- To avoid z-fighting mid-motion, fan movers by tiny per-layer angle offsets
-  (proportional to their final stack index), converging to 0 at t = 1.
-- At t = 1, swap to the committed *post* state (with its recomputed z-offsets). Animate
-  z-offset relaxation over ~150ms so layers settle visually.
-- `FLIP`: rotate whole model π about the flip axis. `PRECREASE`: play fold to ~π·0.9 and
-  back, then flash the new crease line.
+- Animation is **not a separate renderer**. `buildModel` returns `setProgress(t)`: the last
+  fold's movers swing about its hinge from 0 → π, and whatever the join curves and the layer
+  heights still owe is blended in over the same interval. t = 0 is exactly the previous state's
+  layout, t = 1 is exactly this one's, so nothing snaps at the end and no z-offset relaxation is
+  needed — the v1.4 scheme (movers in a rotating pivot beside static slabs, then a swap to the
+  post state) existed only because the two were built by different code.
+- Per Lemmas L1/L2 **no collision detection is needed** — the discrete engine already
+  guaranteed feasibility; the animation is presentation only.
+- Mid-motion z-fighting cannot occur: layers are physically ε apart at every θ.
+- `FLIP` and `PRECREASE` are not animated (a flip is a half-turn applied whole; a precrease
+  moves nothing).
 
 ### 8.3 Interaction (`interact`) — "only foldable things fold"
 
