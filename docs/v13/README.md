@@ -19,11 +19,14 @@ onto a curve.
   producing cannot arise.
 - **A CREASE becomes a U-turn.** The two layers it joins lie on the same side of the crease
   line, Δz apart, so the paper doubles back: a semicircle of radius Δz/2 whose ends leave both
-  layers tangentially, drawn from π·Δz/4 of material on each side. Every crease on ONE fold
-  line gets the same band width, hence **one shared centre**, hence concentric turns — so the
-  layer nested inside really is inside. (Size each turn's band on its own radius instead and
-  the centres separate by more than the radius between them; each inner turn then pokes out
-  through the one that should enclose it. Shipped once; visible immediately at any folded edge.)
+  layers tangentially, drawn from π·Δz/4 of material on each side. Each turn is centred **one
+  own radius in** from the fold line, so its rim lands exactly ON that line — every layer's
+  folded edge reaches the line, whatever else is folded there. (Centring a turn on the widest
+  turn ENCLOSING it gives concentric layers, truer to real paper, but sets each inner rim back
+  by the difference of the radii — 3ε on the cup — and that reads as the outer layer wrapping
+  round the side of the stack while the inner fold stops short. Shipped once; removed. The cost
+  of the flush rims is the other way round: an inner turn can now cross the arc of the one that
+  used to enclose it, strictly inside the pile.)
 - **Height is ONE FIELD over the material.** Every face pulls the sheet toward its own level
   with a reach of its deepest join; the height at a point is the weighted average of the faces
   that reach it — the engine's level deep inside a face, the midpoint at a crease, a smooth
@@ -54,9 +57,9 @@ onto a curve.
 - **A join never claims more than a small fraction of the paper** (4 % of the square, a third
   of its face). The flat plates ARE the model — a face has to read as a stiff flat sheet at the
   height the engine gave it — and without the cap the bands grow with ε until Explode turns
-  every face into one continuous blob. When the cap cannot hold the widest turn on a fold line,
-  every turn there is drawn at the same reduced scale, so the nest keeps its order as narrow
-  ribbons instead of loops swinging past the fold line.
+  every face into one continuous blob. When the cap cannot hold a turn, that turn is drawn at
+  the reduced scale its own band holds — a narrow ribbon instead of a loop swinging past the
+  fold line.
 - **One parameter**: `ε`, the layer gap (default 0.006). A separate hinge-radius knob is a
   contradiction, not a parameter: demanding radius R forces the layers it joins 2R apart, which
   *is* the gap. **Explode** bounds the whole STACK, not just the gap (`ε ≤ 0.12/depth`): one

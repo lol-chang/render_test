@@ -627,15 +627,11 @@ no separation (I1); naive rendering creates it.
 
 3. **A CREASE becomes a U-turn.** The two layers it joins lie on the SAME side of the crease
    line, Δz apart, so the paper doubles back: a semicircle of radius Δz/2 whose ends leave both
-   layers tangentially, drawn from a band of material π·Δz/4 deep on each side. Turns that nest
-   share **one centre**, so they are concentric and the layer nested inside really is inside,
-   which is what a folded edge shows. (Giving each its own centre separates the centres by more
-   than the radius between them, and each inner turn then pokes out through the one that should
-   enclose it. Shipped once; visible immediately.)
+   layers tangentially, drawn from a band of material π·Δz/4 deep on each side.
 
-   **The centre sits one OUTERMOST RADIUS in from the fold line**, so that outermost rim lands
-   exactly ON the line — where the engine says the paper ends — and the tighter turns sit back
-   behind it by the paper wrapped around them. Put the centre at the far side of the band
+   **The centre sits one OWN RADIUS in from the fold line**, so every turn's rim lands exactly
+   ON that line — where the engine says the paper ends — whatever else is folded there. Put the
+   centre at the far side of the band
    instead and every rim comes out δ − r short: the folded edges are all drawn inside the
    computed outline, no two layers' rims agree, and since a short rim is an outward push, a
    crease meeting the sheet's border at an angle flicks the corner out past that border. The
@@ -645,12 +641,17 @@ no separation (I1); naive rendering creates it.
    of the rim landing on the line: a turn is only as long as its material if the plates retreat
    by π·r/2, and exact plates are the one thing the renderer may not trade away.
 
-   **Turns nest only where one's LAYER SPAN contains another's**, and the centre comes from that
-   ENCLOSER — not from the widest turn on the fold line. Two turns whose spans are disjoint are
-   separate folds that merely land on the same line; tying them to a common centre drags the
-   shallower one a layer gap in behind a turn that does not enclose it and steps the folded edge
-   (the rolling fold grew an ear at its outer end). Band width is likewise each crease's own,
-   which also stops a shallow turn inheriting a deep one's wide band and eating the plate.
+   **No turn borrows another's centre.** An earlier build centred a turn on the widest turn
+   ENCLOSING it, so the layers came out concentric and the inner ones sat tucked behind the
+   outer, the way a real folded edge nests. It is truer to paper, but it pulls each inner rim
+   back from the fold line by the difference of the two radii — 3ε on the cup, where a one-layer
+   turn hides behind a seven-layer one — and what that reads as on screen is the outer layer
+   wrapping round the side of the stack while the inner fold stops short. On a deep pile that is
+   the dominant thing you see. The cost of dropping it is paid strictly INSIDE the pile: an
+   inner rim now sits on the fold line at its own height, outside the arc that used to enclose
+   it, so on a nested crease the inner fold can cross the outer one. Nothing leaves the engine's
+   outline, and the plates are untouched. Band width is likewise each crease's own, which stops
+   a shallow turn inheriting a deep one's wide band and eating the plate.
 
    **Height is ONE FIELD over the material, not a sum of per-face corrections.** Every face
    pulls the sheet toward its own level with a reach of its deepest join, and the height at a
@@ -685,11 +686,9 @@ no separation (I1); naive rendering creates it.
    flat sheet at the height the engine gave it. Without the cap the bands grow with ε, so
    Explode turned every face into one continuous blob with no flat paper left anywhere; with
    it, the plates stay flat and the joins become the narrow stretched ribbons an exploded
-   diagram wants. When the cap cannot hold a nest's outermost turn, EVERY turn behind that same
-   encloser is drawn at the ONE same reduced scale, so the nest keeps its order — the outer
-   still wrapping the inner — as ribbons inside the band rather than loops swinging out past the
-   fold line. (Scaling them separately is what separates their centres again.) And a
-   face only reaches out THROUGH ITS OWN JOINS, never in every direction: reaching by plain
+   diagram wants. When the cap cannot hold a turn, that turn is drawn at the reduced scale its
+   own band holds — a ribbon inside the band rather than a loop swinging out past the fold
+   line. And a face only reaches out THROUGH ITS OWN JOINS, never in every direction: reaching by plain
    distance lets it jump a neighbour thinner than the band and drag that level into paper it
    does not touch, which waved every plate once the layers were apart.
 
@@ -722,7 +721,7 @@ no separation (I1); naive rendering creates it.
 
 8. **UI parameters & presets.** One slider: `ε` ("layer gap", [0.001, 0.05]), **default 0.006**.
    It is the only shape parameter — layers Δz apart are joined by a semicircle of radius Δz/2,
-   so turns nested at one crease touch without overlapping. A separate "hinge radius" knob is
+   centred one radius in from the fold line. A separate "hinge radius" knob is
    not a free parameter but a contradiction: insisting on radius R forces the two layers it
    joins to sit 2R apart, which *is* the layer gap, and setting it independently inflates the
    stack by 2R per fold. (Shipped once, in v1.4, as `bend`.) Preset **Explode** spreads the
@@ -750,15 +749,14 @@ no separation (I1); naive rendering creates it.
      Origami paper is stiff, and length alone does not catch this — a triangle can keep all
      three edge lengths and still be sheared into a spike. Stretch is what shows (paper pulled
      thin reads as a rip), so stretch is bounded and so is the share of the sheet carrying any;
-     compression is left alone, because a compressed band draws the same clean curve and some
-     of it is unavoidable where nested turns share a centre.
+     compression is left alone, because a compressed band draws the same clean curve.
    - *no paper hangs past the outline the engine computed*, and none falls short of it either.
      The plates being exact says nothing about the folded EDGES between them, and seen from
      above a folded model is mostly rims.
-   - *folded edges nest the way a folded edge nests*: a turn nothing encloses reaches the fold
-     line exactly, a turn tucked inside another sits strictly further in, and along a fold that
-     runs border to border the rim does not move. This is the check that catches an "ear" —
-     paper standing somewhere no real sheet folded this way would put it.
+   - *every fold rim lands on its fold line*: every turn's rim reaches the fold line, nested or
+     not, and along a fold that runs border to border the rim does not move. This is the check
+     that catches an "ear" — paper standing somewhere no real sheet folded this way would put
+     it — and the one that catches a rim tucked back behind another layer's.
    - *animation*: t = 1 reproduces the committed build exactly.
 - Camera: default **orthographic top view** (matches diagrams) + orbit controls toggle.
 

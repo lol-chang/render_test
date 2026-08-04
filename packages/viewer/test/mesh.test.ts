@@ -16,9 +16,9 @@
  *   3. THE ROUNDING STAYS LOCAL. A join's curve may only move paper about as far as the join is
  *      deep. This is what stops a "pretty" curve from quietly becoming the model.
  *
- * Inside a band the paper does stretch — a curve is longer than the chord it replaces, and
- * turns nested at one crease share a centre so the inner ones have material to spare. That is
- * the trade this design makes deliberately, in exchange for (1); it is bounded, not hidden.
+ * Inside a band the paper does stretch — a curve is longer than the chord it replaces, and the
+ * band has to reach from the plate out to a rim sitting on the fold line. That is the trade this
+ * design makes deliberately, in exchange for (1); it is bounded, not hidden.
  */
 import { describe, expect, it } from 'vitest';
 import type * as THREE from 'three';
@@ -213,9 +213,8 @@ describe('paper away from a join is not stretched', () => {
  * three edge lengths and still be sheared into a spike.
  *
  * Stretch is what shows: paper pulled thin reads as a rip. Compression does not — the surface a
- * compressed band draws is the same clean curve, just sampled more densely — and some of it is
- * unavoidable, because turns nested at one crease share a centre and the inner ones then have
- * material to spare. So this bounds stretch, and bounds how much of the sheet may carry any.
+ * compressed band draws is the same clean curve, just sampled more densely. So this bounds
+ * stretch, and bounds how much of the sheet may carry any.
  *
  * It was the check that found the two real defects in this construction: per-face height
  * corrections that disagreed across a shared crease (118× on the cup — the paper visibly
@@ -265,11 +264,11 @@ describe('the paper does not crumple', () => {
  * the fold line puts every rim short of that line, by a different amount per layer — the edges
  * of a folded flap and the sheet under it visibly fail to meet — and being short is an outward
  * push, so where a crease runs out at the sheet's border it flicks the corner past that border
- * and hangs a sliver of paper off the model. Centring on the WIDEST turn of each fold line
- * fixes both: the outer rim lands on the line and the rest nest in behind it.
+ * and hangs a sliver of paper off the model. Centring each turn one OWN radius in fixes both:
+ * the rim lands on the line, and no part of the band reaches past it.
  *
  * So: no paper anywhere may be drawn outside the outline the engine computed. The residue is
- * the smooth tail of the nesting fade at a corner, well under one layer gap.
+ * the smooth tail of a join's fade at a corner, well under one layer gap.
  */
 describe('no paper hangs past the outline the engine computed', () => {
   for (const demo of demos()) {
@@ -335,25 +334,27 @@ describe('no paper hangs past the outline the engine computed', () => {
 });
 
 /**
- * FOLDED EDGES NEST THE WAY A FOLDED EDGE NESTS. Look at the end of a rolled strip: the sheet
- * that wraps outermost comes right to the fold, and every turn tucked inside it sits back by the
- * paper wrapped around it. That is the whole visual grammar of a folded edge, and it is a
- * statement about the RIM of each turn — where the paper actually reaches — which the plates
- * being exact says nothing about.
+ * EVERY FOLD RIM LANDS ON ITS FOLD LINE. The rim of a turn — how far the paper actually reaches
+ * round the outside of the bend — is what a folded model shows from above, and the plates being
+ * exact says nothing about it. The engine says the paper ends at the fold line, so that is where
+ * every turn's rim belongs, whatever else is folded at the same line.
  *
- * Two ways to get it wrong, both of which grow an "ear" of paper no real sheet has:
+ * Two ways to pull a rim off that line, both of which show:
  *
- *  · tie every turn on a fold LINE to one centre. Turns nest only where one's layer span
- *    contains another's; two folds that merely land on the same line are independent, and
- *    pulling the shallower one in behind a turn that does not enclose it steps the folded edge.
- *  · fade the nesting out towards a crease's ends. Then the rim flares back to the fold line
- *    over the last band-width and the model grows a lip at the end of every fold — but a fold's
- *    cross section at the sheet's border is the same cross section as in the middle.
+ *  · centre the turn at the far side of its band. Then every rim is short by δ − r, a different
+ *    amount per layer, so a flap and the sheet under it stop at visibly different places — and
+ *    short is an outward push, so a crease running out at the sheet's border flicks the corner
+ *    past it.
+ *  · centre a turn on the widest turn ENCLOSING it. The layers come out concentric, which is
+ *    truer to real paper, but it sets each inner rim back by the difference of the radii — 3ε on
+ *    the cup — and reads as the outer layer wrapping round the side of the stack while the inner
+ *    fold stops short of the line. This build does not do it (see `joinsOf`).
  *
- * So: a turn nothing encloses reaches the fold line exactly; a turn tucked inside another sits
- * strictly further in; and along a fold that runs border to border, the rim does not move.
+ * So: every turn's rim reaches its fold line, nested or not; and along a fold that runs border to
+ * border the rim does not move, since a fold's cross section at the sheet's border is the same
+ * cross section as in the middle.
  */
-describe('folded edges nest the way a folded edge nests', () => {
+describe('every fold rim lands on its fold line', () => {
   interface Turn { key: string; r: number; lo: number; hi: number; rim: number[]; open: boolean }
 
   const turnsOf = (state: FoldedState, opts: BuildOptions): Turn[] => {
@@ -428,17 +429,12 @@ describe('folded edges nest the way a folded edge nests', () => {
         };
         for (const t of turns) {
           const inner = Math.min(...running(t)), outer = Math.max(...t.rim);
-          const enclosers = turns.filter((o) =>
-            o !== t && o.key === t.key && o.lo <= t.lo + 1e-12 && o.hi >= t.hi - 1e-12 && o.r > t.r + 1e-12);
-          if (!enclosers.length) {
-            // nothing wraps it: its rim IS the fold line
-            if (inner > tol) wrong.push(`free turn r=${(t.r / opts.epsilon).toFixed(1)}ε sits ${(inner / opts.epsilon).toFixed(2)}ε inside the line`);
-          } else {
-            for (const o of enclosers) {
-              if (Math.max(...running(o)) > inner + tol) {
-                wrong.push(`turn r=${(t.r / opts.epsilon).toFixed(1)}ε is not tucked inside r=${(o.r / opts.epsilon).toFixed(1)}ε`);
-              }
-            }
+          // its rim IS the fold line — whether or not another turn on the same line encloses it
+          if (inner > tol) {
+            const nested = turns.some((o) =>
+              o !== t && o.key === t.key && o.lo <= t.lo + 1e-12 && o.hi >= t.hi - 1e-12 && o.r > t.r + 1e-12);
+            wrong.push(`${nested ? 'nested' : 'free'} turn r=${(t.r / opts.epsilon).toFixed(1)}ε sits ` +
+              `${(inner / opts.epsilon).toFixed(2)}ε inside the line`);
           }
           // a fold that runs right across the sheet keeps one rim the whole way
           if (t.open && outer - inner > tol) {

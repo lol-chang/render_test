@@ -14,10 +14,9 @@
  *
  *   · a CREASE joins two layers that the fold turned back on each other. Both lie on the same
  *     side of the crease line, Δz apart, so the paper makes a U-TURN: a semicircle of radius
- *     Δz/2 whose ends leave both layers tangentially. Several folds turning at one line are
- *     given ONE centre, so their turns are concentric and the layer nested inside really is
- *     inside — that is what a folded edge shows, and getting it from a shared centre is the
- *     only way to get it at all.
+ *     Δz/2 whose ends leave both layers tangentially, centred one radius in from the fold line
+ *     so its rim lands exactly on it. Every turn is centred on its OWN radius, so folds sharing
+ *     a line all reach that line rather than tucking in behind the widest of them.
  *   · a SPLIT with a level change is one sheet crossing the edge of the pile beneath it, so the
  *     paper DRAPES: it stays flat on the pile right up to the cut and falls away beyond it on
  *     an S-curve that leaves both levels flat.
@@ -51,7 +50,7 @@ export interface BuildOptions {
   /**
    * ε — the gap between one layer's surface and the next, and the only shape parameter there
    * is. A fold's turn follows from it: layers Δz apart are joined by a semicircle of radius
-   * Δz/2, so turns nested at one crease touch without overlapping. Explode just makes ε bigger.
+   * Δz/2, centred one radius in from the fold line. Explode just makes ε bigger.
    */
   epsilon: number;
 }
@@ -468,20 +467,23 @@ function levelsOf(state: FoldedState, eps: number): Map<FaceId, number> {
  * and the rim comes out δ − r short of the fold line: every folded edge is drawn inside the
  * outline the engine computed, no two layers' rims agree, and — because the rim being short is
  * an outward push on the paper — a crease that meets the sheet's border at an angle squirts the
- * corner out past that border, a spike the engine never placed. Put it one OUTERMOST RADIUS in
- * instead and that outermost rim lands exactly ON the fold line, which is where the engine says
- * the paper ends; the tighter turns nest inside it, as a real folded edge does; and no part of
- * the band ever reaches past the plate's own outline.
+ * corner out past that border, a spike the engine never placed. Put it one OWN RADIUS in instead
+ * and the rim lands exactly ON the fold line, which is where the engine says the paper ends, and
+ * no part of the band ever reaches past the plate's own outline.
  *
- * WHICH turns share that centre is the other half of it, and it is NOT "all of them on this fold
- * line". Turns nest only where one's LAYER SPAN contains another's — the paper of the outer turn
- * is what the inner one is tucked behind. Two turns whose spans are disjoint are separate folds
- * that merely happen to land on the same line, and each one's own outermost rim belongs on that
- * line. Tie those to a common centre and the shallower one is dragged a layer gap in behind a
- * turn that does not enclose it: the rolling fold grows a step at its outer end, an ear of paper
- * that no real sheet folded this way has. So the centre comes from a turn's ENCLOSER, and the
- * band width is each crease's own again — nothing but nesting is shared now, which also stops a
- * shallow turn inheriting the wide band of a deep one and eating the plate for nothing.
+ * Every turn on a line gets its own centre — nothing is shared. An earlier build gave a turn the
+ * centre of the widest turn ENCLOSING it, so the layers were concentric and the inner ones sat
+ * tucked behind the outer, the way a real folded edge nests. That is truer to paper, but it
+ * pulls an inner rim back from the fold line by the difference of the two radii — 3ε on the cup,
+ * where a one-layer turn hides behind a seven-layer one — and what that reads as on screen is
+ * the outer layer wrapping round the side of the stack while the inner fold stops short. On a
+ * deep pile it is the dominant thing you see, and it made the fold look wrong rather than
+ * nested. So each turn is centred on its own radius and every rim lands on the line.
+ *
+ * The cost is paid between the layers: an inner turn's rim now sits on the fold line at its own
+ * height, which is outside the arc of the turn that used to enclose it, so on a nested crease the
+ * inner fold can cross the outer one. Nothing leaves the engine's outline — the overlap is
+ * strictly inside the pile, hidden by the paper around it — and the plates are untouched.
  *
  * The band is then wider than the turn needs, and the remainder simply runs FLAT from the
  * turn's tangent line out to where the plate resumes. Material is split between the two in
@@ -495,7 +497,7 @@ function levelsOf(state: FoldedState, eps: number): Map<FaceId, number> {
  * turn would be all curve and no paper.
  */
 function joinsOf(state: FoldedState, eps: number, z: ReadonlyMap<FaceId, number>): Join[] {
-  interface Raw { e: Join; lineKey: string; reach: number }
+  interface Raw { e: Join; reach: number }
   const onOutline = (p: P2): boolean =>
     Math.abs(p.x) < 1e-9 || Math.abs(p.x - 1) < 1e-9 || Math.abs(p.y) < 1e-9 || Math.abs(p.y - 1) < 1e-9;
   const ends = (a: P2, b: P2): { len: number; fadeA: boolean; fadeB: boolean } =>
@@ -547,7 +549,6 @@ function joinsOf(state: FoldedState, eps: number, z: ReadonlyMap<FaceId, number>
           axis: dz / 2, arc: 0, sides,
           ma, mb, ...ends(ma, mb), nx: sgn * l.nx, ny: sgn * l.ny,
         },
-        lineKey: `${l.nx},${l.ny},${l.c}`,
         reach,
       });
     } else {
@@ -558,46 +559,28 @@ function joinsOf(state: FoldedState, eps: number, z: ReadonlyMap<FaceId, number>
           axis: 0, arc: Math.min(DRAPE_REACH * dz, JOIN_CAP, 0.3 * reach), sides,
           ma, mb, ...ends(ma, mb), nx: 0, ny: 0,
         },
-        lineKey: '', reach,
+        reach,
       });
     }
   }
-  // A turn's ENCLOSER: the widest turn on the same fold line whose layer span contains its own
-  // (itself, if nothing does). That is the turn it is tucked behind, and one encloser-radius in
-  // from the line is where their common centre goes.
-  const hinges = raws.filter((r) => r.e.kind === 'hinge');
-  const outer = hinges.map((r) => {
-    let R = (r.e.zHi - r.e.zLo) / 2;
-    for (const o of hinges) {
-      if (o.lineKey !== r.lineKey) continue;
-      if (o.e.zLo <= r.e.zLo + 1e-12 && o.e.zHi >= r.e.zHi - 1e-12) R = Math.max(R, (o.e.zHi - o.e.zLo) / 2);
-    }
-    return R;
-  });
-  // The band has to be at least deep enough to hold the centre, and each crease caps it with
-  // its own paper. If a nest still cannot fit (a big layer gap in Explode), every turn tucked
-  // behind the same encloser is drawn at the ONE same reduced scale: the nest keeps its order,
-  // the outer still wrapping the inner, but as narrow ribbons that stay inside the band instead
-  // of loops swinging out past the fold line. Scaling them separately is what separates their
-  // centres, and then each inner turn pokes out through the one that should enclose it.
-  const squash = new Map<string, number>();
-  const nestKey = (i: number): string => `${hinges[i]!.lineKey}|${rnd9(outer[i]!)}`;
-  hinges.forEach((r, i) => {
-    const R = outer[i]!;
-    const d = Math.min(Math.max(Math.PI * (r.e.zHi - r.e.zLo) / 4, R), JOIN_CAP, 0.3 * r.reach);
+  // Every turn is centred one OWN radius in from the fold line, so every rim — not just the
+  // widest one's — lands exactly on that line. The band has to be at least deep enough to hold
+  // the centre, and each crease caps it with its own paper; where the cap bites (a big layer gap
+  // in Explode) the turn is drawn at the reduced scale its own band can hold, as a narrow ribbon
+  // that stays inside the band instead of a loop swinging out past the fold line.
+  for (const r of raws) {
+    if (r.e.kind !== 'hinge') continue;
+    const R = (r.e.zHi - r.e.zLo) / 2;
+    const d = Math.min(Math.max(Math.PI * R / 2, R), JOIN_CAP, 0.3 * r.reach);
+    const scale = Math.min(1, R > 1e-12 ? d / R : 1);
     r.e.delta = d;
-    const k = nestKey(i);
-    squash.set(k, Math.min(squash.get(k) ?? 1, R > 1e-12 ? d / R : 1));
-  });
-  hinges.forEach((r, i) => {
-    const scale = squash.get(nestKey(i))!;
-    r.e.bulge = ((r.e.zHi - r.e.zLo) / 2) * scale;
-    r.e.axis = outer[i]! * scale;
+    r.e.bulge = R * scale;
+    r.e.axis = R * scale;
     // material for the turn and for the flat run out to the plate, split by their lengths
     const flat = r.e.delta - r.e.axis;
     const round = Math.PI * r.e.bulge / 2;
     r.e.arc = round + flat > 1e-12 ? r.e.delta * round / (round + flat) : r.e.delta;
-  });
+  }
   return raws.map((r) => r.e).filter((j) => j.delta > 1e-9);
 }
 
