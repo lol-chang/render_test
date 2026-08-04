@@ -665,10 +665,22 @@ no separation (I1); naive rendering creates it.
    height profile, `w = (1−s)/(1+s)` with `s = sin(π·d/2δ)`. A smoothstep there stalls at the
    crease and crushes the paper into the fold by 300×.
 
-   The turn's sideways lean FADES OUT where a crease ends inside the paper, so where two
-   creases cross the fold goes crisp instead of fighting the crease it meets. Ends on the
-   square's outline are not faded — nothing crosses there and the fold must stay round to the
-   edge of the sheet.
+   The turn's sideways lean is a FIELD, not a sum. Where two creases cross, both bands reach the
+   paper between them and each pushes in its own direction; adding them lets both take the same
+   paper in full, so the lean is divided by the total weight once that exceeds one. A single band
+   is untouched — one weight never exceeds 1.
+
+   It FADES OUT where a crease ends inside the paper, so where two creases cross the fold goes
+   crisp instead of fighting the crease it meets. Ends on the square's outline are not faded —
+   nothing crosses there and the fold must stay round to the edge of the sheet. The fade takes
+   THREE band widths, and that length is load-bearing: the weight climbs 0 → 1 over it, so the
+   shear it leaves peaks mid-ramp and falls as 1/RAMP, and a saturated band crossing a mid-ramp
+   one is where every inside-out triangle sat (all of them, at 45° crossings). One band width
+   left 23 on the cup and 2 on the frog — red specks on the white back of the paper. Three clears
+   every demo. It is paid for in stretch, since a longer ramp leaves more paper part-way through
+   its turn: the cup's share past 1.5× goes 0.11% → 0.22%, and the crumple bound was raised from
+   0.2% to 0.25% once, deliberately, to buy it. Fading the turn's RADIUS instead of its
+   displacement was tried and is worse on both counts (cup share 0.38%).
 
    The lean is instead held below THE ROOM THE PAPER ACTUALLY HAS: how deep the shallower of the
    two faces runs, out of the join, at that point along it. A lean is only payable where there
@@ -753,6 +765,10 @@ no separation (I1); naive rendering creates it.
    - *no paper hangs past the outline the engine computed*, and none falls short of it either.
      The plates being exact says nothing about the folded EDGES between them, and seen from
      above a folded model is mostly rims.
+   - *the paper is not drawn inside out*: the sheet carries a front skin and a back skin, so a
+     triangle whose orientation disagrees with its material's — the face's own mirror flag taken
+     out — shows the front colour through the back of the paper. Bounded at 40 ppm of the sheet;
+     every demo is at 0.
    - *every fold rim lands on its fold line*: every turn's rim reaches the fold line, nested or
      not, and along a fold that runs border to border the rim does not move. This is the check
      that catches an "ear" — paper standing somewhere no real sheet folded this way would put

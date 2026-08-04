@@ -94,6 +94,15 @@ const DRAPE_REACH = 3;
  * joins become the narrow stretched ribbons an exploded diagram wants.
  */
 const JOIN_CAP = 0.04;
+/**
+ * How far a join's curve fades out towards an end INSIDE the paper, as a multiple of its band
+ * width. The fade is what keeps two crossing joins from tearing the sheet between them; how LONG
+ * it takes is what keeps the sheet from being drawn inside out. The weight climbs 0 → 1 over this
+ * distance, so the shear it leaves peaks in the middle of the ramp and scales as 1/RAMP — and a
+ * saturated band crossing a mid-ramp one is exactly where every inside-out triangle sat. Three
+ * band widths clears them on every demo; two leaves 14 on the cup. See `joinWeight`.
+ */
+const FADE_RAMP = 3;
 
 const rnd9 = (v: number): number => Math.round(v * 1e9) / 1e9;
 const numOf = (v: Vec2): P2 => ({ x: v.x.toNumber(), y: v.y.toNumber() });
@@ -413,9 +422,10 @@ function joinWeight(j: Join, x: number, y: number): { u: number; w: number; t: n
   const dx = (j.mb.x - j.ma.x) / j.len, dy = (j.mb.y - j.ma.y) / j.len;
   const t = (x - j.ma.x) * dx + (y - j.ma.y) * dy;
   const u = Math.abs((x - j.ma.x) * -dy + (y - j.ma.y) * dx);   // distance to the join's LINE
+  const fadeLen = Math.min(FADE_RAMP * j.delta, j.len / 2);
   let w = 1;
-  if (j.fadeA) w = Math.min(w, t / j.delta);
-  if (j.fadeB) w = Math.min(w, (j.len - t) / j.delta);
+  if (j.fadeA) w = Math.min(w, t / fadeLen);
+  if (j.fadeB) w = Math.min(w, (j.len - t) / fadeLen);
   return { u, w: w <= 0 ? 0 : w >= 1 ? 1 : smoothstep(w), t };
 }
 

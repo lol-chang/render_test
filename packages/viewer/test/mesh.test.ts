@@ -216,6 +216,14 @@ describe('paper away from a join is not stretched', () => {
  * compressed band draws is the same clean curve, just sampled more densely. So this bounds
  * stretch, and bounds how much of the sheet may carry any.
  *
+ * The SHARE bound was 0.2% and is 0.25%, raised deliberately and once, to buy the fade ramp that
+ * stops the sheet being drawn inside out. The two trade directly: the ramp's shear is what turns
+ * triangles over, it falls as the ramp lengthens, and a longer ramp leaves more paper part-way
+ * through its turn. At the ramp that clears every demo the cup carries 0.22% (was 0.11% at the
+ * ramp that left 23 inside-out triangles on it). A red speck on the white back of the paper is
+ * the defect a viewer actually sees; a fifth of a percent more paper past 1.5× is not. The WORST
+ * stretch bound is untouched, and is what would catch a real rip — the cup sits at 6.1× of 8.
+ *
  * It was the check that found the two real defects in this construction: per-face height
  * corrections that disagreed across a shared crease (118× on the cup — the paper visibly
  * ripping at every crease crossing), and a smoothstep height profile that stalls at the crease
@@ -251,7 +259,7 @@ describe('the paper does not crumple', () => {
         }
         // the residue sits where two creases cross, in a patch a fraction of a millimetre across
         expect(worst, `stretched ${worst.toFixed(1)}× at ${at}`).toBeLessThan(8);
-        expect(stretchedArea / total, 'share of the sheet stretched past 1.5×').toBeLessThan(0.002);
+        expect(stretchedArea / total, 'share of the sheet stretched past 1.5×').toBeLessThan(0.0025);
       });
     }
   }

@@ -34,8 +34,11 @@ onto a curve.
   crossing, the two faces meeting at a crease correct toward different third faces and disagree
   by ε on the edge they share (118× area on one cup triangle). The weight has to reproduce the
   U-turn's own height profile, `w = (1−s)/(1+s)`, `s = sin(π·d/2δ)`; a smoothstep stalls at the
-  crease and crushes the paper into the fold by 300×. The turn's sideways lean fades out where
-  a crease ends inside the paper, so a crossing goes crisp rather than fighting itself.
+  crease and crushes the paper into the fold by 300×. The turn's sideways lean is a field too —
+  divided by the total weight where two bands reach the same paper, not summed — and fades out
+  over THREE band widths where a crease ends inside the paper, so a crossing goes crisp rather
+  than fighting itself. Three, not one: the fade's shear is what draws triangles inside out, it
+  falls as 1/ramp, and one band width left 23 such triangles on the cup.
 - **A SPLIT with a level change becomes a drape.** One sheet crossing the edge of the pile
   beneath it stays flat on the pile up to the cut and falls away beyond it on an S-curve that
   leaves both levels flat. A facet legitimately spans many levels — in the cup, 0 to 6 — and
@@ -79,6 +82,7 @@ than guess at band widths:
 | layer height | every face drawn at exactly its stack index × ε |
 | no stretching outside a join | any curve that leaked out of its band |
 | the paper does not crumple | triangle AREA vs its area on the flat square — a shear that keeps every edge length but spikes the triangle |
+| the paper is not drawn inside out | triangle orientation vs its material's, so the front colour never shows through the back |
 | the rounding stays local | a "pretty" curve quietly becoming the model |
 | animation | t = 1 reproduces the committed build exactly |
 
