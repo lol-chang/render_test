@@ -447,6 +447,77 @@ describe('every fold rim lands on its fold line', () => {
   }
 });
 
+/**
+ * THE PAPER IS NOT DRAWN INSIDE OUT. The sheet carries a front skin and a back skin — the source
+ * square's +z side is red, its other side is white — and which one a viewer sees is decided by
+ * the triangle's own orientation. So a triangle whose orientation disagrees with its material's,
+ * once the face's own mirror flag is accounted for, is drawn wrong side out: a red speck sitting
+ * on the white back of the paper, and the first thing anyone notices in a screenshot.
+ *
+ * They come from the sideways lean. Two crossing joins both reach the paper between them, each
+ * pushing in its own direction, and each one's weight ramps 0 → 1 over a band width along its own
+ * crease. Where one band is saturated and the other is mid-ramp, the shear that leaves can turn
+ * the local map over. Measured, that is where every one of them sits, at 45° crossings.
+ *
+ * Leaning by the AVERAGE rather than the sum removed 40% of them (and lowered the crumple with
+ * it). The rest need a longer fade ramp, which trades directly against stretch — 2.75 band widths
+ * clears them and puts the cup's crumple exactly on its own limit — so this bounds the residue
+ * instead of claiming zero, and stops it growing back.
+ */
+describe('the paper is not drawn inside out', () => {
+  for (const demo of demos()) {
+    for (const [label, pick] of [['paper', () => PAPER], ['thin', () => THIN]] as const) {
+      it(`${demo.name} — ${label}`, () => {
+        const state = demo.states[demo.states.length - 1]!;
+        const opts = pick(state);
+        const s = sheetOf(state, opts);
+        // each face's mirror flag, by material point: a face folded over draws its back to +z
+        const faces = [...state.faces.values()].map((f: Face) => ({
+          poly: f.srcPoly.map((p) => ({ x: p.x.toNumber(), y: p.y.toNumber() })),
+          det: f.T.m[0][0].toNumber() * f.T.m[1][1].toNumber()
+            - f.T.m[0][1].toNumber() * f.T.m[1][0].toNumber(),
+        }));
+        const detAt = (x: number, y: number): number => {
+          for (const { poly, det } of faces) {
+            let pos = false, neg = false;
+            for (let i = 0; i < poly.length; i++) {
+              const a = poly[i]!, b = poly[(i + 1) % poly.length]!;
+              const c = (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
+              if (c > 1e-9) pos = true; else if (c < -1e-9) neg = true;
+            }
+            if (!(pos && neg)) return det;
+          }
+          return 0;
+        };
+        let wrongArea = 0, total = 0, at = '';
+        for (let t = 0; t < s.tris; t++) {
+          const a = s.index[3 * t]!, b = s.index[3 * t + 1]!, c = s.index[3 * t + 2]!;
+          const ax = s.uv[2 * a]!, ay = s.uv[2 * a + 1]!;
+          const bx = s.uv[2 * b]!, by = s.uv[2 * b + 1]!;
+          const cx = s.uv[2 * c]!, cy = s.uv[2 * c + 1]!;
+          const rest = ((bx - ax) * (cy - ay) - (by - ay) * (cx - ax)) / 2;
+          if (Math.abs(rest) < 1e-14) continue;
+          total += Math.abs(rest);
+          const u = [0, 1, 2].map((k) => s.pos[3 * b + k]! - s.pos[3 * a + k]!);
+          const v = [0, 1, 2].map((k) => s.pos[3 * c + k]! - s.pos[3 * a + k]!);
+          const nz = u[0]! * v[1]! - u[1]! * v[0]!;
+          const area = Math.hypot(
+            u[1]! * v[2]! - u[2]! * v[1]!, u[2]! * v[0]! - u[0]! * v[2]!, u[0]! * v[1]! - u[1]! * v[0]!);
+          // paper standing on edge inside a turn is genuinely vertical; only judge what faces up
+          if (area <= 1e-18 || Math.abs(nz) / area <= 0.2) continue;
+          const det = detAt((ax + bx + cx) / 3, (ay + by + cy) / 3);
+          if (det !== 0 && Math.sign(nz) !== Math.sign(rest) * Math.sign(det)) {
+            wrongArea += Math.abs(rest);
+            if (!at) at = `(${((ax + bx + cx) / 3).toFixed(3)},${((ay + by + cy) / 3).toFixed(3)})`;
+          }
+        }
+        expect(wrongArea / total * 1e6, `${(wrongArea / total * 1e6).toFixed(1)} ppm of the sheet ` +
+          `drawn inside out${at ? `, from ${at}` : ''}`).toBeLessThan(40);
+      });
+    }
+  }
+});
+
 describe('the rounding stays local', () => {
   for (const demo of demos()) {
     it(demo.name, () => {
