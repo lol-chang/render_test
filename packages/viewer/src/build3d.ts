@@ -15,8 +15,9 @@
  *   · a CREASE joins two layers that the fold turned back on each other. Both lie on the same
  *     side of the crease line, Δz apart, so the paper makes a U-TURN: a semicircle of radius
  *     Δz/2 whose ends leave both layers tangentially, centred one radius in from the fold line
- *     so its rim lands exactly on it. Every turn is centred on its OWN radius, so folds sharing
- *     a line all reach that line rather than tucking in behind the widest of them.
+ *     so its rim lands exactly on it. A turn WRAPPED by a wider one on the same stretch of line
+ *     shares the wider turn's centre instead and tucks in behind it, concentric, the way real
+ *     layers nest inside a fold — an inner rim on the line would poke through the wrap.
  *   · a SPLIT with a level change is one sheet crossing the edge of the pile beneath it, so the
  *     paper DRAPES: it stays flat on the pile right up to the cut and falls away beyond it on
  *     an S-curve that leaves both levels flat.
@@ -401,32 +402,57 @@ interface Join {
   axis: number;                  // hinge only: the turn's centre, as a distance from the fold line
   arc: number;                   // how much of the band is the turn itself (the rest runs flat)
   nx: number; ny: number;        // hinge only: unit normal, from the crease line INTO the paper
+  la: P2; lb: P2;                // the join in FOLDED space (both faces agree on it)
+  /**
+   * Step only: how the fall is SKEWED across the split line. The layers of the pile the sheet
+   * is stepping off end at that line, each at a level the sheet has to pass on its way down —
+   * and other paper may rise on the far side. β is chosen so the sheet crosses the line in the
+   * middle of the free window between the two: weight β for the upper face's pull and 1/β for
+   * the lower's puts the blend at the line exactly there. 1 = the plain symmetric S-curve.
+   */
+  beta: number;
+  /**
+   * Step only: how far from each end the skew has to give way (0 = it does not). Where the
+   * split's line ends on a fold line, the corner belongs to the fold's turn — a skew held at
+   * full strength there fights the turn's own profile over the same material and shears the
+   * corner to shreds — so β ramps back to 1 over the fold's own band width.
+   */
+  yieldA: number; yieldB: number;
   /** Per face: its material outline (CCW) and the way OUT of the join, in material space. */
   sides: { poly: P2[]; ax: number; ay: number }[];
 }
 
 /**
- * How much of a join's curve applies at a material point: full in the middle of the join, fading
- * to nothing at an end that lies INSIDE the paper.
+ * How a join's curve ENDS where the join ends inside the paper: it SHARPENS, it does not fade.
  *
- * Without the fade, two joins that cross tear the sheet apart between them. Their bands overlap,
- * and on each side of the crossing the paper belongs to a different pair of faces — so one side
- * is rounding a three-layer turn while the other rounds a one-layer turn, and the two disagree
- * by ε on the very edge they share. Measured on the cup, that ripped one triangle to 118× its
- * own area. Fading each curve out where its join ends leaves the crossing at the engine's exact
- * position, where every face agrees, at the price of the rounding flattening into a step over
- * the last band's width. Ends on the paper's OUTLINE are not faded: nothing crosses there, and
- * the fold has to stay round right to the edge of the sheet.
+ * The turn's ellipse keeps its full height — the levels it connects are fixed — but its lateral
+ * radius, band width and centre all shrink toward the end, down to SHARP_MIN of themselves, so
+ * the fold tightens into the gather point the way real paper gathers at a corner where fold
+ * lines meet. This is what an 8-layer rolling fold gets for free (its lines run border to
+ * border and never end inside the sheet): every layer keeps its OWN level right up to the fold.
+ * The earlier scheme faded the curve's WEIGHT to zero instead, which flattened every rim onto
+ * the fold plane while the heights still blended — near a junction that squeezed layers from
+ * every level into one mushy surface, and that is where the paper stuck together and the
+ * colours bled. Ends on the paper's OUTLINE neither sharpen nor fade: a fold's cross section at
+ * the border is the same as in the middle.
+ *
+ * Beyond an interior end the (narrowed) band dies out over its own width — a fold that has
+ * ended pushes nothing — and that short ramp is the one place shear still concentrates.
  */
-function joinWeight(j: Join, x: number, y: number): { u: number; w: number; t: number } {
+const SHARP_MIN = 0.32;
+function joinWeight(j: Join, x: number, y: number): { u: number; w: number; t: number; s: number } {
   const dx = (j.mb.x - j.ma.x) / j.len, dy = (j.mb.y - j.ma.y) / j.len;
   const t = (x - j.ma.x) * dx + (y - j.ma.y) * dy;
   const u = Math.abs((x - j.ma.x) * -dy + (y - j.ma.y) * dx);   // distance to the join's LINE
   const fadeLen = Math.min(FADE_RAMP * j.delta, j.len / 2);
+  let g = 1;
+  if (j.fadeA) g = Math.min(g, t / fadeLen);
+  if (j.fadeB) g = Math.min(g, (j.len - t) / fadeLen);
+  const s = SHARP_MIN + (1 - SHARP_MIN) * smoothstep(g < 0 ? 0 : g > 1 ? 1 : g);
   let w = 1;
-  if (j.fadeA) w = Math.min(w, t / fadeLen);
-  if (j.fadeB) w = Math.min(w, (j.len - t) / fadeLen);
-  return { u, w: w <= 0 ? 0 : w >= 1 ? 1 : smoothstep(w), t };
+  if (j.fadeA && t < 0) w = 1 + t / (2 * j.delta * s);
+  if (j.fadeB && t > j.len) w = 1 - (t - j.len) / (2 * j.delta * s);
+  return { u, w: w <= 0 ? 0 : w >= 1 ? 1 : smoothstep(w), t, s };
 }
 
 /**
@@ -481,19 +507,17 @@ function levelsOf(state: FoldedState, eps: number): Map<FaceId, number> {
  * and the rim lands exactly ON the fold line, which is where the engine says the paper ends, and
  * no part of the band ever reaches past the plate's own outline.
  *
- * Every turn on a line gets its own centre — nothing is shared. An earlier build gave a turn the
- * centre of the widest turn ENCLOSING it, so the layers were concentric and the inner ones sat
- * tucked behind the outer, the way a real folded edge nests. That is truer to paper, but it
- * pulls an inner rim back from the fold line by the difference of the two radii — 3ε on the cup,
- * where a one-layer turn hides behind a seven-layer one — and what that reads as on screen is
- * the outer layer wrapping round the side of the stack while the inner fold stops short. On a
- * deep pile it is the dominant thing you see, and it made the fold look wrong rather than
- * nested. So each turn is centred on its own radius and every rim lands on the line.
- *
- * The cost is paid between the layers: an inner turn's rim now sits on the fold line at its own
- * height, which is outside the arc of the turn that used to enclose it, so on a nested crease the
- * inner fold can cross the outer one. Nothing leaves the engine's outline — the overlap is
- * strictly inside the pile, hidden by the paper around it — and the plates are untouched.
+ * A turn that is ENCLOSED — a wider turn on the same stretch of the same folded line whose
+ * z-range contains its own — is centred on the widest encloser instead, so the layers come out
+ * concentric and each inner rim tucks in behind the outer by the difference of the radii, the
+ * way a real folded edge nests. The alternative — every rim on its own radius so all land on
+ * the line — pokes each inner rim THROUGH the turns wrapping it, and that shows as the inner
+ * layer's colour striped across the fold's rim, the defect a viewer sees first. The enclosure
+ * test is taken in FOLDED space (key and span both): the same folded line collects creases
+ * whose material segments differ per layer, and the same infinite line can equally carry
+ * unrelated folds at disjoint stretches, which must NOT nest — nesting one pulls a rim off a
+ * fold line that nothing wraps (Two-fold's 2-layer hinge at x∈[0,½] sat a full gap inside its
+ * line because the base hinge at x∈[½,¾] happened to be collinear).
  *
  * The band is then wider than the turn needs, and the remainder simply runs FLAT from the
  * turn's tangent line out to where the plate resumes. Material is split between the two in
@@ -556,7 +580,7 @@ function joinsOf(state: FoldedState, eps: number, z: ReadonlyMap<FaceId, number>
         e: {
           kind: 'hinge', lo: lo.id, hi: hi.id, zLo: Math.min(za, zb), zHi: Math.max(za, zb),
           delta: Math.min(Math.PI * dz / 4, JOIN_CAP, 0.3 * reach), bulge: dz / 2,
-          axis: dz / 2, arc: 0, sides,
+          axis: dz / 2, arc: 0, sides, la, lb, beta: 1, yieldA: 0, yieldB: 0,
           ma, mb, ...ends(ma, mb), nx: sgn * l.nx, ny: sgn * l.ny,
         },
         reach,
@@ -567,6 +591,7 @@ function joinsOf(state: FoldedState, eps: number, z: ReadonlyMap<FaceId, number>
           kind: 'step', lo: lo.id, hi: hi.id, zLo: Math.min(za, zb), zHi: Math.max(za, zb),
           delta: Math.min(DRAPE_REACH * dz, JOIN_CAP, 0.3 * reach), bulge: 0,
           axis: 0, arc: Math.min(DRAPE_REACH * dz, JOIN_CAP, 0.3 * reach), sides,
+          la: foldPoint(fa.T, ma.x, ma.y), lb: foldPoint(fa.T, mb.x, mb.y), beta: 1, yieldA: 0, yieldB: 0,
           ma, mb, ...ends(ma, mb), nx: 0, ny: 0,
         },
         reach,
@@ -583,22 +608,38 @@ function joinsOf(state: FoldedState, eps: number, z: ReadonlyMap<FaceId, number>
   // how a folded edge looks. The alternative — every rim on its own radius so all lands on the
   // fold line — lets inner rims poke through outer ones, and that shows as red back-face
   // slivers where the paper should be one colour, which is what this build fixes.
+  // Turns nest where their FOLDED images share a line — the material segments of one folded
+  // crease line differ per layer (each is the line pulled back through its own isometry), so
+  // the key and the overlap test both have to be taken in folded space.
   const lineKey = (j: Join): string =>
-    `${rnd9(j.nx)},${rnd9(j.ny)},${rnd9(j.nx * j.ma.x + j.ny * j.ma.y)}`;
+    `${rnd9(j.nx)},${rnd9(j.ny)},${rnd9(j.nx * j.la.x + j.ny * j.la.y)}`;
   const byLine = new Map<string, Raw[]>();
   for (const r of raws) {
     if (r.e.kind !== 'hinge') continue;
     const k = lineKey(r.e);
     (byLine.get(k) ?? byLine.set(k, []).get(k)!).push(r);
   }
+  // A turn only encloses another where the two actually share a stretch of the line: the same
+  // infinite line can carry unrelated folds at disjoint segments (Two-fold's base hinge at
+  // x∈[½,¾] and its 2-layer hinge at x∈[0,½] are both on y=½), and nesting one inside the
+  // other pulls a rim off a fold line that nothing wraps.
+  const spanOf = (j: Join): [number, number] => {
+    const dx = -j.ny, dy = j.nx;      // direction of the fold line, in folded space
+    const ta = dx * j.la.x + dy * j.la.y, tb = dx * j.lb.x + dy * j.lb.y;
+    return [Math.min(ta, tb), Math.max(ta, tb)];
+  };
   for (const r of raws) {
     if (r.e.kind !== 'hinge') continue;
     const R = (r.e.zHi - r.e.zLo) / 2;
-    // widest turn on the same line whose z-range CONTAINS this one's — the encloser
+    const [t0, t1] = spanOf(r.e);
+    // widest turn on the same line whose z-range CONTAINS this one's and whose segment
+    // genuinely overlaps it along the line — the encloser
     let Renc = R;
     for (const s of byLine.get(lineKey(r.e)) ?? []) {
       if (s === r || s.e.kind !== 'hinge') continue;
       if (s.e.zLo <= r.e.zLo && s.e.zHi >= r.e.zHi) {
+        const [s0, s1] = spanOf(s.e);
+        if (Math.min(t1, s1) - Math.max(t0, s0) <= 1e-9) continue;
         const Rs = (s.e.zHi - s.e.zLo) / 2;
         if (Rs > Renc) Renc = Rs;
       }
@@ -615,6 +656,77 @@ function joinsOf(state: FoldedState, eps: number, z: ReadonlyMap<FaceId, number>
     const round = Math.PI * r.e.bulge / 2;
     r.e.arc = round + flat > 1e-12 ? r.e.delta * round / (round + flat) : r.e.delta;
   }
+  // Skew every STEP through the free window at its split line. The pile the sheet steps off
+  // ends there — every one of its layers at a level the fall has to pass — and other paper may
+  // rise on the far side. Find the highest layer ending against the line on the pile's side
+  // (a) and the lowest rising on the far side (b); the sheet crosses the line midway between
+  // them. Nothing near → a = zLo, b = zHi → the plain symmetric S-curve, unchanged.
+  const foldedPoly = new Map<FaceId, P2[]>();
+  for (const f of state.faces.values()) {
+    foldedPoly.set(f.id, f.srcPoly.map((p) => foldPoint(f.T, p.x.toNumber(), p.y.toNumber())));
+  }
+  for (const r of raws) {
+    const j = r.e;
+    if (j.kind !== 'step') continue;
+    const l = lineOf(j.la, j.lb);
+    if (!l) continue;
+    const hiPoly = foldedPoly.get(j.hi)!;
+    let hx = 0, hy = 0;
+    for (const p of hiPoly) { hx += p.x; hy += p.y; }
+    const sHi = l.nx * (hx / hiPoly.length) + l.ny * (hy / hiPoly.length) - l.c >= 0 ? 1 : -1;
+    // measure against the seam TRIMMED at both ends: a plate merely touching an endpoint of
+    // the seam with a corner does not stand in the sheet's way along it
+    const segLen = Math.hypot(j.lb.x - j.la.x, j.lb.y - j.la.y) || 1;
+    const trim = Math.min(j.delta, 0.25 * segLen);
+    const ux = (j.lb.x - j.la.x) / segLen, uy = (j.lb.y - j.la.y) / segLen;
+    const ta2 = { x: j.la.x + trim * ux, y: j.la.y + trim * uy };
+    const tb2 = { x: j.lb.x - trim * ux, y: j.lb.y - trim * uy };
+    let a = j.zLo, b = j.zHi;
+    for (const [id, lvl] of z) {
+      if (lvl <= j.zLo + eps / 2 || lvl >= j.zHi - eps / 2) continue;
+      if (id === j.lo || id === j.hi) continue;
+      const poly = foldedPoly.get(id)!;
+      let near = Infinity, cx = 0, cy = 0;
+      for (const p of poly) { near = Math.min(near, distSeg(p.x, p.y, ta2, tb2)); cx += p.x; cy += p.y; }
+      for (let i = 0; i < poly.length; i++) {
+        const q = poly[(i + 1) % poly.length]!;
+        near = Math.min(near, distSeg((poly[i]!.x + q.x) / 2, (poly[i]!.y + q.y) / 2, ta2, tb2));
+      }
+      if (near > j.delta) continue;
+      const side = (l.nx * (cx / poly.length) + l.ny * (cy / poly.length) - l.c) * sHi;
+      if (side >= -1e-9) a = Math.max(a, lvl);      // under the sheet, on the pile's side
+      if (side <= 1e-9) b = Math.min(b, lvl);       // in the fall zone, on the far side
+    }
+    let z0 = (a + b) / 2;
+    if (a > b + 1e-12) {
+      // INVERTED window: the sheet leaves one pile and dives under another butted against it,
+      // so there is no free height anywhere — only the seam between the piles to fall through.
+      // Squeeze the drape to the seam and thread it half a gap off any plate level, so the
+      // plates it cannot avoid are met edge-on for the shortest possible stretch instead of
+      // being sliced along the whole band. The cliff stays just wide enough for its steepest
+      // slope (1.5× the mean, the S-profile's peak) to keep the local stretch under the 1.5×
+      // the crumple budget counts.
+      const k = Math.round(z0 / eps);
+      if (Math.abs(z0 - k * eps) < 0.25 * eps) z0 = (k + 0.5) * eps;
+      j.delta = Math.min(j.delta, Math.max(2 * eps, 2.0 * (z0 - j.zLo)));
+      j.arc = j.delta;
+    }
+    z0 = Math.min(Math.max(z0, j.zLo + eps / 4), j.zHi - eps / 4);
+    j.beta = (z0 - j.zLo) / (j.zHi - z0);
+    // where the split's line ends on a fold line, the skew yields to the fold's turn
+    const atCorner = (p: P2): number => {
+      let s = 0;
+      for (const h of raws) {
+        if (h.e.kind !== 'hinge') continue;
+        for (const q of [h.e.ma, h.e.mb]) {
+          if (Math.hypot(p.x - q.x, p.y - q.y) < 1e-7) s = Math.max(s, h.e.delta);
+        }
+      }
+      return s;
+    };
+    j.yieldA = atCorner(j.ma);
+    j.yieldB = atCorner(j.mb);
+  }
   return raws.map((r) => r.e).filter((j) => j.delta > 1e-9);
 }
 
@@ -630,7 +742,7 @@ function layout(
   mesh: MeshData,
   faceOf: (Face | null)[],
   eps: number,
-): { pos: Float64Array; settled: Uint8Array; z: Map<FaceId, number> } {
+): { pos: Float64Array; settled: Uint8Array; z: Map<FaceId, number>; joins: Join[] } {
   const z = levelsOf(state, eps);
   const joins = joinsOf(state, eps, z);
   const byFace = new Map<FaceId, Join[]>();
@@ -660,6 +772,39 @@ function layout(
     level: z.get(f.id) ?? 0,
     joins: byFace.get(f.id) ?? [],
   }));
+  // A STEP falls through the free window its split line leaves (see `joinsOf`, which sets β).
+  // The weight is read off the PROFILE the fall should draw — z0 at the line (the window's
+  // middle), the plate at the band's far edge, flat at both — rather than scaling the hinge
+  // weight by β: a factor of β≫1 on a weight whose transition sits wherever β·w crosses 1
+  // crammed the whole descent into a fraction of the band, and the shear tore the corner where
+  // a deep step met a fold (14.8× stretch on the cup at (½,1)). Reading w from the wanted
+  // curve keeps the slope at (z0−zLo)/δ, and both sides of the line agree at z0 by
+  // construction (own-1 + partner-β from below, own-1 + partner-1/β from above).
+  const stepW = (j: Join, srcIsHi: boolean, d: number, mx: number, my: number): number => {
+    // near a corner shared with a fold line the skew gives way to the turn (β → 1)
+    let beta = j.beta;
+    if (beta !== 1 && (j.yieldA > 0 || j.yieldB > 0)) {
+      const dxs = (j.mb.x - j.ma.x) / j.len, dys = (j.mb.y - j.ma.y) / j.len;
+      const t = (mx - j.ma.x) * dxs + (my - j.ma.y) * dys;
+      let f = 1;
+      if (j.yieldA > 0) f = Math.min(f, smoothstep(t / (FADE_RAMP * j.yieldA)));
+      if (j.yieldB > 0) f = Math.min(f, smoothstep((j.len - t) / (FADE_RAMP * j.yieldB)));
+      beta = 1 + (beta - 1) * f;
+    }
+    const dz = j.zHi - j.zLo;
+    const z0 = j.zLo + dz * beta / (1 + beta);
+    const s = smoothstep(Math.min(1, d / Math.max(j.arc, 1e-12)));
+    const zp = srcIsHi ? j.zLo + (z0 - j.zLo) * (1 - s) : z0 + (j.zHi - z0) * s;
+    return srcIsHi
+      ? (zp - j.zLo) / Math.max(j.zHi - zp, 1e-9)
+      : (j.zHi - zp) / Math.max(zp - j.zLo, 1e-9);
+  };
+  const stepPartner = new Map<FaceId, Set<FaceId>>();
+  for (const j of joins) {
+    if (j.kind !== 'step') continue;
+    (stepPartner.get(j.lo) ?? stepPartner.set(j.lo, new Set()).get(j.lo)!).add(j.hi);
+    (stepPartner.get(j.hi) ?? stepPartner.set(j.hi, new Set()).get(j.hi)!).add(j.lo);
+  }
   // The weight is not free: for one crease on its own it has to reproduce the U-turn's own
   // height profile exactly, or the field and the sideways lean disagree about how fast the
   // paper is moving and the material piles up. Blending w and 1 gives height zLo + Δz·w/(1+w),
@@ -680,6 +825,62 @@ function layout(
     }
     return d;
   };
+  // THE REACH FOLLOWS THE PAPER. Raw distance to a join's segment also reaches material that
+  // is not the join's own — past the segment's end, or across a crease into the layer folded
+  // against it — and the pull then drags paper that has nothing to do with the join. On the
+  // cup, the corner where two steps and a crease meet put a neighbouring layer's material
+  // within band distance of a step's endpoint, and its fall dragged that layer a whole gap
+  // down out of its plate, straight through the fold above it. So a join's pull is confined
+  // to the material of its OWN two faces, dying off over a band width outside them: material
+  // at a crossing's shared corner is inside (or touching) the neighbour and still blends, and
+  // every first-order blend across the join itself is on the join's own faces and unchanged.
+  // Spill dies over about a layer gap — NOT over the join's own band width. A step skewed by β
+  // carries weights up to β≫1, and with a band-wide spill that overweight bled into a hinge
+  // band next to it and warped the U-turn's height a full gap out of its own curve.
+  const polyOfFace = new Map<FaceId, P2[]>();
+  for (const s of sources) polyOfFace.set(s.id, s.poly);
+  const ownSide = (j: Join, x: number, y: number): number => {
+    const dLo = distToFace(polyOfFace.get(j.lo)!, x, y);
+    if (dLo <= 0) return 1;
+    const d = Math.min(dLo, distToFace(polyOfFace.get(j.hi)!, x, y));
+    return d <= 0 ? 1 : weigh(d, Math.min(j.arc, 1.5 * eps));
+  };
+
+  // NO LAYER POKES THROUGH A TURN THAT WRAPS IT. A hinge's curve sweeps from zLo to zHi inside
+  // its band, and every layer sandwiched between those levels ends against the same fold line —
+  // the engine puts their edges ON it, which with a real gap ε is INSIDE the wrapping curve.
+  // Left there, each sandwiched plate's edge slices through the wrap and shows as its colour
+  // striped across the fold's rim. Real paper tucks the inner pile behind the wrap, so this
+  // does the same: a vertex sitting between a wrap's levels, closer to the fold line than the
+  // wrap's curve at that height, is pushed in behind the curve (plus a small clearance). The
+  // push fades where the wrap itself fades, and never applies to the wrap's own two faces or
+  // to a rim nested on the same line, which the encloser rule already places.
+  interface Wrap {
+    j: Join; nx: number; ny: number; c: number; dx: number; dy: number;
+    t0: number; t1: number; mid: number; rz: number; key: string;
+  }
+  const foldedKey = (j: Join): string =>
+    `${rnd9(j.nx)},${rnd9(j.ny)},${rnd9(j.nx * j.la.x + j.ny * j.la.y)}`;
+  const wraps: Wrap[] = [];
+  for (const j of joins) {
+    if (j.kind !== 'hinge' || j.zHi - j.zLo < 1.5 * eps) continue;   // nothing fits inside
+    const c = j.nx * j.la.x + j.ny * j.la.y;
+    const dx = -j.ny, dy = j.nx;
+    const ta = dx * j.la.x + dy * j.la.y, tb = dx * j.lb.x + dy * j.lb.y;
+    wraps.push({
+      j, nx: j.nx, ny: j.ny, c, dx, dy,
+      t0: Math.min(ta, tb), t1: Math.max(ta, tb),
+      mid: (j.zLo + j.zHi) / 2, rz: (j.zHi - j.zLo) / 2, key: foldedKey(j),
+    });
+  }
+  const hingeLines = new Map<FaceId, Set<string>>();
+  for (const j of joins) {
+    if (j.kind !== 'hinge') continue;
+    for (const id of [j.lo, j.hi]) {
+      (hingeLines.get(id) ?? hingeLines.set(id, new Set()).get(id)!).add(foldedKey(j));
+    }
+  }
+  const TUCK_GAP = 0.25 * eps;
 
   const pos = new Float64Array(3 * mesh.V);
   const settled = new Uint8Array(mesh.V);
@@ -692,10 +893,24 @@ function layout(
     let zSum = 0, wSum = 0, blended = false;
     for (const src of sources) {
       let w = 0;
-      if (src.id === f.id || distToFace(src.poly, mx, my) === 0) w = 1;
+      // On a step boundary the containment shortcut would put both sides at weight 1 and pull
+      // the line back to the midpoint; the join's skewed weight is the intended value there.
+      if (src.id === f.id) w = 1;
+      else if (!stepPartner.get(f.id)?.has(src.id) && distToFace(src.poly, mx, my) === 0) w = 1;
       else {
         for (const j of src.joins) {
-          const q = weigh(distSeg(mx, my, j.ma, j.mb), j.arc);
+          let q: number;
+          if (j.kind === 'step') {
+            q = stepW(j, src.id === j.hi, distSeg(mx, my, j.ma, j.mb), mx, my);
+          } else {
+            // the height profile narrows with the turn (see joinWeight), and dies with it
+            // beyond an interior end — each layer returns to its OWN level at a junction
+            // instead of blending through everyone else's
+            const jw = joinWeight(j, mx, my);
+            q = jw.w * weigh(jw.u, j.arc * jw.s);
+          }
+          if (q <= w) continue;
+          q *= ownSide(j, mx, my);
           if (q > w) w = q;
         }
       }
@@ -712,12 +927,17 @@ function layout(
     let dx = 0, dy = 0, lean = 0, bent = false;
     for (const j of byFace.get(f.id) ?? []) {
       if (j.kind !== 'hinge') continue;
-      const { u, w, t } = joinWeight(j, mx, my);
-      if (u >= j.delta || w <= 0) continue;
+      const { u, w, t, s } = joinWeight(j, mx, my);
+      const deltaS = j.delta * s;
+      if (u >= deltaS || w <= 0) continue;
       bent = true;
-      const n = u <= j.arc
-        ? j.axis - j.bulge * Math.cos((Math.PI / 2) * (u / j.arc))
-        : j.axis + (u - j.arc) * (j.delta - j.axis) / (j.delta - j.arc);
+      // the turn, SHARPENED toward an interior end (see joinWeight): lateral radius, centre
+      // and band all scale by s, the vertical span stays — the fold tightens, the rim stays
+      // on its line, and the layers beside it keep their own levels
+      const arcS = j.arc * s, axisS = j.axis * s, bulgeS = j.bulge * s;
+      const n = u <= arcS
+        ? axisS - bulgeS * Math.cos((Math.PI / 2) * (u / arcS))
+        : axisS + (u - arcS) * (deltaS - axisS) / (deltaS - arcS);
       // the room LEFT from here: the vertex already stands u of the way out along that ray
       const across = holdBelow(n - u, roomOf(j, t) - u);
       dx += w * across * j.nx;
@@ -735,18 +955,500 @@ function layout(
     // 1.5×). One band still gives exactly itself: a single weight never exceeds 1.
     if (lean > 1) { dx /= lean; dy /= lean; }
 
-    pos[3 * v] = p.x + dx;
-    pos[3 * v + 1] = p.y + dy;
-    pos[3 * v + 2] = wSum > 0 ? zSum / wSum : (z.get(f.id) ?? 0);
+    let px = p.x + dx, py = p.y + dy;
+    const pz = wSum > 0 ? zSum / wSum : (z.get(f.id) ?? 0);
+
+    // tuck behind any turn that wraps this vertex's level (see `wraps` above)
+    let tuck = 0, tx = 0, ty = 0;
+    for (const wr of wraps) {
+      const j = wr.j;
+      if (f.id === j.lo || f.id === j.hi) continue;
+      if (pz <= j.zLo + 0.25 * eps || pz >= j.zHi - 0.25 * eps) continue;
+      if (hingeLines.get(f.id)?.has(wr.key)) continue;   // its own rim nests there instead
+      const u = wr.nx * px + wr.ny * py - wr.c;
+      if (u < -1e-9) continue;                            // not on the wrap's side at all
+      const t = wr.dx * px + wr.dy * py;
+      const fadeLen = Math.min(FADE_RAMP * j.delta, j.len / 2);
+      let w = 1;
+      if (t < wr.t0) w = j.fadeA ? 0 : 1 - (wr.t0 - t) / j.delta;
+      else if (t > wr.t1) w = j.fadeB ? 0 : 1 - (t - wr.t1) / j.delta;
+      else {
+        if (j.fadeA) w = Math.min(w, (t - wr.t0) / fadeLen);
+        if (j.fadeB) w = Math.min(w, (wr.t1 - t) / fadeLen);
+      }
+      if (w <= 0) continue;
+      w = smoothstep(w);
+      const s = (pz - wr.mid) / wr.rz;
+      const need = j.axis - j.bulge * Math.sqrt(Math.max(0, 1 - s * s)) + TUCK_GAP;
+      const push = w * (need - u);
+      if (push > tuck) { tuck = push; tx = wr.nx; ty = wr.ny; }
+    }
+    if (tuck > 1e-12) {
+      px += tuck * tx; py += tuck * ty;
+      bent = true;
+    }
+
+    pos[3 * v] = px;
+    pos[3 * v + 1] = py;
+    pos[3 * v + 2] = pz;
     if (!bent && !blended) settled[v] = 1;
   }
-  return { pos, settled, z };
+  return { pos, settled, z, joins };
+}
+
+/**
+ * NO PAPER IS DRAWN THROUGH PAPER — enforced, not hoped for. The blended fields above get the
+ * sheet within a whisker of correct everywhere, but where several fold lines meet, the blends
+ * can still leave hairline interpenetrations (measured: layer order inverted by ~0.1ε at the
+ * cup's junctions), and a hair is all it takes for the paper's red inside to show through the
+ * white. So the layout is finished the way cloth solvers finish a frame: find every pair of
+ * triangles that actually intersect, and walk the offending vertices back to just past the
+ * other surface, until nothing intersects. Only vertices the joins already bent may move —
+ * settled paper is the engine's exact answer and stays put — and each push is capped, so the
+ * repair stays a local nudge of the bands rather than a new simulation. The result is the
+ * physical invariant the whole renderer owes: one sheet of paper never passes through itself.
+ */
+function untangle(
+  mesh: MeshData,
+  faceOf: (Face | null)[],
+  pos: Float64Array,
+  settled: Uint8Array,
+  eps: number,
+  z: ReadonlyMap<FaceId, number>,
+  joins: readonly Join[],
+): void {
+  const GAP = 0.05 * eps;                // separation to leave once a crossing is undone
+  /**
+   * LAYERS DO NOT STICK TOGETHER, either. Distinct layers a hair apart are the same defect as
+   * layers a hair through each other — they merge into one surface on screen and flicker —
+   * and the junction blends squeeze unrelated paper to exactly that. So paper of different
+   * levels that is not joined by any fold is held at least this far apart, each side keeping
+   * the side it is on. Half a gap is the most the design can ask for (a step's fall threads
+   * pile edges at ε/2 by construction), so a third of a gap is enforced.
+   */
+  const MINSEP = 0.35 * eps;
+  const DAMP = 0.6;                      // relaxation: part of the correction per round
+  const ROUNDS = 10;
+  const CELL = 0.02;
+  const nTri = mesh.triCell.length;
+  // paper JOINED by a fold legitimately converges at it — its two sides meet at the rim
+  const joined = new Set<string>();
+  for (const j of joins) {
+    joined.add(j.lo < j.hi ? `${j.lo}|${j.hi}` : `${j.hi}|${j.lo}`);
+  }
+
+  interface Tri { ok: boolean; still: boolean; lvl: number; fid: FaceId | null }
+  const tris: Tri[] = new Array(nTri);
+  for (let t = 0; t < nTri; t++) {
+    const f = faceOf[mesh.triCell[t]!];
+    const a = mesh.tris[3 * t]!, b = mesh.tris[3 * t + 1]!, c = mesh.tris[3 * t + 2]!;
+    tris[t] = {
+      ok: !!f,
+      still: !!(settled[a] && settled[b] && settled[c]),
+      lvl: f ? (z.get(f.id) ?? 0) : 0,
+      fid: f ? f.id : null,
+    };
+  }
+
+  // a vertex may never be pushed further than a fraction of its own mesh cell in one round —
+  // the knots sit where the mesh is finest, and a push longer than the triangles there spears
+  // them through their neighbours and multiplies the crossings instead of removing them
+  const step = new Float64Array(mesh.V).fill(0.5 * eps);
+  for (let t = 0; t < nTri; t++) {
+    for (let e = 0; e < 3; e++) {
+      const a = mesh.tris[3 * t + e]!, b = mesh.tris[3 * t + ((e + 1) % 3)]!;
+      const L = Math.hypot(mesh.mx[a]! - mesh.mx[b]!, mesh.my[a]! - mesh.my[b]!) * 0.4;
+      if (L < step[a]!) step[a] = L;
+      if (L < step[b]!) step[b] = L;
+    }
+  }
+  // ...and never so far that a triangle's AREA stretches past what the crumple contract
+  // allows: the repair may not turn a hidden hairline crossing into a visible rip
+  // conservative against the crumple bound of 8: two vertices of one triangle pushed in the
+  // same round are each judged with the other held still, so leave joint-move headroom
+  const AREA_LIM = 6.5;
+  const fan = new Map<number, { b: number; c: number; rest2: number }[]>();
+  for (let t = 0; t < nTri; t++) {
+    const a = mesh.tris[3 * t]!, b = mesh.tris[3 * t + 1]!, c = mesh.tris[3 * t + 2]!;
+    const rest2 = Math.abs(
+      (mesh.mx[b]! - mesh.mx[a]!) * (mesh.my[c]! - mesh.my[a]!)
+      - (mesh.my[b]! - mesh.my[a]!) * (mesh.mx[c]! - mesh.mx[a]!));
+    if (rest2 < 1e-16) continue;
+    (fan.get(a) ?? fan.set(a, []).get(a)!).push({ b, c, rest2 });
+    (fan.get(b) ?? fan.set(b, []).get(b)!).push({ b: c, c: a, rest2 });
+    (fan.get(c) ?? fan.set(c, []).get(c)!).push({ b: a, c: b, rest2 });
+  }
+  const stretchOK = (v: number, dx2: number, dy2: number, dz2: number): number => {
+    let a2 = 1;
+    for (const { b, c, rest2 } of fan.get(v) ?? []) {
+      // area of (v + α·Δ, b, c): |N₀ + α·Δ×(b−c)| ≤ |N₀| + α·|Δ×(b−c)| — bound the bound
+      const e1x = pos[3 * b]! - pos[3 * c]!, e1y = pos[3 * b + 1]! - pos[3 * c + 1]!, e1z = pos[3 * b + 2]! - pos[3 * c + 2]!;
+      const vx = pos[3 * v]! - pos[3 * c]!, vy = pos[3 * v + 1]! - pos[3 * c + 1]!, vz = pos[3 * v + 2]! - pos[3 * c + 2]!;
+      const n0 = Math.hypot(vy * e1z - vz * e1y, vz * e1x - vx * e1z, vx * e1y - vy * e1x);
+      const g2 = Math.hypot(dy2 * e1z - dz2 * e1y, dz2 * e1x - dx2 * e1z, dx2 * e1y - dy2 * e1x);
+      if (g2 < 1e-18) continue;
+      const room = AREA_LIM * rest2 - n0;
+      if (room <= 0) return 0;
+      if (g2 > room) a2 = Math.min(a2, room / g2);
+    }
+    return a2;
+  };
+
+  const bbox = new Float64Array(6 * nTri);
+  const push = new Float64Array(3 * mesh.V);
+  const pushMag = new Float64Array(mesh.V);
+  const colSum = new Float64Array(mesh.V);
+  const colW = new Float64Array(mesh.V);
+  const moved = new Uint8Array(mesh.V);
+  const spent = new Float64Array(mesh.V);    // total distance a vertex has been walked
+  const pos0 = Float64Array.from(pos);
+  const COL = 0.004;                         // column spacing for the layer spread
+  const colCells = new Set<number>();
+  let best: Float64Array | null = null;      // never hand back anything worse than the input
+  let bestLen = Infinity;
+  let firstLen = 0;
+  // after the first full sweep, only the neighbourhoods where crossings were found are checked
+  // again — the rest of the sheet was clean and nothing there has moved
+  let region: Set<number> | null = null;
+  let nextRegion = new Set<number>();
+
+  for (let round = 0; round <= ROUNDS; round++) {
+    // fresh bounds and hash each round — vertices moved last round
+    const buckets = new Map<number, number[]>();
+    for (let t = 0; t < nTri; t++) {
+      if (!tris[t]!.ok) continue;
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+      for (let e = 0; e < 3; e++) {
+        const v = mesh.tris[3 * t + e]!;
+        x0 = Math.min(x0, pos[3 * v]!); x1 = Math.max(x1, pos[3 * v]!);
+        y0 = Math.min(y0, pos[3 * v + 1]!); y1 = Math.max(y1, pos[3 * v + 1]!);
+        z0 = Math.min(z0, pos[3 * v + 2]!); z1 = Math.max(z1, pos[3 * v + 2]!);
+      }
+      bbox[6 * t] = x0; bbox[6 * t + 1] = x1; bbox[6 * t + 2] = y0;
+      bbox[6 * t + 3] = y1; bbox[6 * t + 4] = z0; bbox[6 * t + 5] = z1;
+      for (let gx = Math.floor(x0 / CELL); gx <= Math.floor(x1 / CELL); gx++) {
+        for (let gy = Math.floor(y0 / CELL); gy <= Math.floor(y1 / CELL); gy++) {
+          const k = gx * 65536 + gy;
+          if (region && !region.has(k)) continue;
+          (buckets.get(k) ?? buckets.set(k, []).get(k)!).push(t);
+        }
+      }
+    }
+
+    push.fill(0); pushMag.fill(0); colSum.fill(0); colW.fill(0); colCells.clear();
+    nextRegion = new Set<number>();
+    let found = 0, roundLen = 0, stick = 0;
+    for (const [ck, list] of buckets) {
+      const cgx = Math.floor(ck / 65536), cgy = ck - cgx * 65536;
+      for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+          const A = list[i]!, B = list[j]!;
+          if (tris[A]!.still && tris[B]!.still) continue;   // exact plates never cross
+          if (bbox[6 * A]! > bbox[6 * B + 1]! || bbox[6 * B]! > bbox[6 * A + 1]!) continue;
+          if (bbox[6 * A + 2]! > bbox[6 * B + 3]! || bbox[6 * B + 2]! > bbox[6 * A + 3]!) continue;
+          if (bbox[6 * A + 4]! > bbox[6 * B + 5]! + MINSEP || bbox[6 * B + 4]! > bbox[6 * A + 5]! + MINSEP) continue;
+          // handle each pair once, in the tile holding the overlap's low corner
+          if (Math.floor(Math.max(bbox[6 * A]!, bbox[6 * B]!) / CELL) !== cgx) continue;
+          if (Math.floor(Math.max(bbox[6 * A + 2]!, bbox[6 * B + 2]!) / CELL) !== cgy) continue;
+          const va = [mesh.tris[3 * A]!, mesh.tris[3 * A + 1]!, mesh.tris[3 * A + 2]!];
+          const vb = [mesh.tris[3 * B]!, mesh.tris[3 * B + 1]!, mesh.tris[3 * B + 2]!];
+          if (va.some((v) => vb.includes(v))) continue;     // joined paper touches via shared verts
+
+          // do they truly cross? plane distances both ways, then interval overlap on the
+          // intersection line (the standard triangle-triangle test, kept because its
+          // by-products — the signed distances — are exactly what the repair needs)
+          const P = (v: number): [number, number, number] => [pos[3 * v]!, pos[3 * v + 1]!, pos[3 * v + 2]!];
+          const pa = va.map(P), pb = vb.map(P);
+          const nrm = (p: [number, number, number][]): [number, number, number] | null => {
+            const u = [p[1]![0] - p[0]![0], p[1]![1] - p[0]![1], p[1]![2] - p[0]![2]];
+            const w = [p[2]![0] - p[0]![0], p[2]![1] - p[0]![1], p[2]![2] - p[0]![2]];
+            const n: [number, number, number] = [
+              u[1]! * w[2]! - u[2]! * w[1]!, u[2]! * w[0]! - u[0]! * w[2]!, u[0]! * w[1]! - u[1]! * w[0]!,
+            ];
+            const L = Math.hypot(n[0], n[1], n[2]);
+            return L < 1e-18 ? null : [n[0] / L, n[1] / L, n[2] / L];
+          };
+          const nA = nrm(pa), nB = nrm(pb);
+          if (!nA || !nB) continue;
+          const dist = (n: [number, number, number], o: [number, number, number], p: [number, number, number][]): number[] =>
+            p.map((q) => n[0] * (q[0] - o[0]) + n[1] * (q[1] - o[1]) + n[2] * (q[2] - o[2]));
+          const dA = dist(nB, pb[0]!, pa);                  // A's verts against B's plane
+          const dB = dist(nA, pa[0]!, pb);
+          const E = 1e-12;
+          const flatA = Math.abs(nA[2]) > 0.4, flatB = Math.abs(nB[2]) > 0.4;
+          const lvlGap = Math.abs(tris[A]!.lvl - tris[B]!.lvl) > 0.5 * eps;
+          const noCross =
+            dA.every((x) => x > E) || dA.every((x) => x < -E)
+            || dB.every((x) => x > E) || dB.every((x) => x < -E)
+            || dA.every((x) => Math.abs(x) <= E) || dB.every((x) => Math.abs(x) <= E);
+          if (noCross) {
+            // not crossing — but STUCK? unrelated flat layers closer than the minimum stay
+            // the side they are on and are eased apart (see MINSEP)
+            if (!flatA || !flatB || !lvlGap) continue;
+            const fa2 = tris[A]!.fid!, fb2 = tris[B]!.fid!;
+            if (joined.has(fa2 < fb2 ? `${fa2}|${fb2}` : `${fb2}|${fa2}`)) continue;
+            const inXY = (x: number, y: number, p: [number, number, number][]): boolean => {
+              const den = (p[1]![1] - p[2]![1]) * (p[0]![0] - p[2]![0]) + (p[2]![0] - p[1]![0]) * (p[0]![1] - p[2]![1]);
+              if (Math.abs(den) < 1e-16) return false;
+              const w1 = ((p[1]![1] - p[2]![1]) * (x - p[2]![0]) + (p[2]![0] - p[1]![0]) * (y - p[2]![1])) / den;
+              const w2 = ((p[2]![1] - p[0]![1]) * (x - p[2]![0]) + (p[0]![0] - p[2]![0]) * (y - p[2]![1])) / den;
+              return w1 >= -1e-6 && w2 >= -1e-6 && 1 - w1 - w2 >= -1e-6;
+            };
+            // count the shortfall and mark the spot — the COLUMN SPREAD below does the moving,
+            // because only a whole column knows how much room the pile actually has here
+            const mark = (p: [number, number, number][], other: [number, number, number][], d: number[]): void => {
+              for (let e = 0; e < 3; e++) {
+                const de = d[e]!;
+                if (Math.abs(de) >= MINSEP) continue;
+                if (!inXY(p[e]![0], p[e]![1], other)) continue;
+                stick += MINSEP - Math.abs(de);
+                found++;
+                const kx = Math.floor(p[e]![0] / COL), ky = Math.floor(p[e]![1] / COL);
+                for (let gx = kx - 1; gx <= kx + 1; gx++) {
+                  for (let gy = ky - 1; gy <= ky + 1; gy++) colCells.add(gx * 262144 + gy);
+                }
+                for (let gx = cgx - 1; gx <= cgx + 1; gx++) {
+                  for (let gy = cgy - 1; gy <= cgy + 1; gy++) nextRegion.add(gx * 65536 + gy);
+                }
+              }
+            };
+            mark(pa, pb, dA);
+            mark(pb, pa, dB);
+            continue;
+          }
+          const dir: [number, number, number] = [
+            nA[1] * nB[2] - nA[2] * nB[1], nA[2] * nB[0] - nA[0] * nB[2], nA[0] * nB[1] - nA[1] * nB[0],
+          ];
+          const dl = Math.hypot(dir[0], dir[1], dir[2]);
+          if (dl < 1e-12) continue;
+          const interval = (p: [number, number, number][], d: number[]): [number, number] | null => {
+            const pts: number[] = [];
+            for (let e = 0; e < 3; e++) {
+              const f2 = (e + 1) % 3;
+              const de = d[e]!, df = d[f2]!;
+              if ((de > E && df < -E) || (de < -E && df > E)) {
+                const s = de / (de - df);
+                pts.push(
+                  (dir[0] * (p[e]![0] + s * (p[f2]![0] - p[e]![0]))
+                    + dir[1] * (p[e]![1] + s * (p[f2]![1] - p[e]![1]))
+                    + dir[2] * (p[e]![2] + s * (p[f2]![2] - p[e]![2]))) / dl,
+                );
+              } else if (Math.abs(de) <= E) {
+                pts.push((dir[0] * p[e]![0] + dir[1] * p[e]![1] + dir[2] * p[e]![2]) / dl);
+              }
+            }
+            if (pts.length < 2) return null;
+            return [Math.min(...pts), Math.max(...pts)];
+          };
+          const iA = interval(pa, dA), iB = interval(pb, dB);
+          if (!iA || !iB) continue;
+          const crossLen = Math.min(iA[1], iB[1]) - Math.max(iA[0], iB[0]);
+          if (crossLen <= 1e-9) continue;
+          found++;
+          roundLen += crossLen;
+          for (let gx = cgx - 1; gx <= cgx + 1; gx++) {
+            for (let gy = cgy - 1; gy <= cgy + 1; gy++) nextRegion.add(gx * 65536 + gy);
+          }
+
+          // Which side should each triangle's paper be on? Where BOTH triangles lie flat-ish
+          // (the braid ramps at fold-line junctions) the engine already says: the lower LEVEL
+          // goes below. That one global answer is what makes the walk converge — pushing every
+          // pair apart by whichever side happens to be closer just trades crossings around the
+          // knot forever. Where either triangle stands on edge (a turn's band), level and
+          // height don't correspond, so the poking side is walked back the way it came.
+          // Which side should each triangle's paper be on? For flat-ish paper the engine
+          // already says: the lower LEVEL goes below — unless the lower face's own fold wraps
+          // right over the other's level here, in which case its crest is legitimately on top.
+          // That one consistent answer is what lets the walk converge; pushing every pair to
+          // whichever side is closer just trades the crossings around the knot forever. Paper
+          // standing on edge (a turn's band) has no vertical order, so the poking vertices are
+          // simply walked back the way they came.
+          const dLvl = tris[A]!.lvl - tris[B]!.lvl;
+          const belowA: boolean | null = flatA && flatB && lvlGap ? dLvl < 0 : null;
+          const repair = (verts: number[], d: number[], n: [number, number, number], below: boolean | null): void => {
+            let neg = 0, pnt = 0;
+            for (const x of d) { if (x < -E) neg++; else if (x > E) pnt++; }
+            if (neg === 0 || pnt === 0) return;
+            const keepSign = below === null
+              ? (neg <= pnt ? 1 : -1)                        // majority side
+              : (below ? -Math.sign(n[2]) : Math.sign(n[2]));  // the ordered side
+            for (let e = 0; e < 3; e++) {
+              const de = d[e]!;
+              if (Math.sign(de) === keepSign) continue;
+              const v = verts[e]!;
+              if (settled[v]) continue;                      // the engine's exact paper stays
+              const want = keepSign * GAP - de;              // along n, to just past the plane
+              if (Math.abs(want) <= pushMag[v]!) continue;   // keep the strongest correction
+              pushMag[v] = Math.abs(want);
+              if (below !== null) {
+                // ordering flat paper is one-dimensional: push straight in z, so the repair
+                // cannot shove material sideways into a third layer at a crowded knot
+                push[3 * v] = 0;
+                push[3 * v + 1] = 0;
+                push[3 * v + 2] = want / n[2];
+              } else {
+                push[3 * v] = want * n[0];
+                push[3 * v + 1] = want * n[1];
+                push[3 * v + 2] = want * n[2];
+              }
+            }
+          };
+          repair(va, dA, nB, belowA);
+          repair(vb, dB, nA, belowA === null ? null : !belowA);
+        }
+      }
+    }
+    // THE COLUMN SPREAD. At every marked spot, list the flat paper the vertical line there
+    // passes through, in its CURRENT order — never reordered, so this cannot push paper
+    // through paper — and re-space it: a minimum gap between distinct, unjoined layers,
+    // settled paper pinned where the engine put it, and everything else moved as little as
+    // possible (weighted pool-adjacent-violators). Where the pile has less room than the gaps
+    // want, the pooling spreads what room there is evenly — which is exactly what a squeezed
+    // pile of real paper does.
+    for (const key of colCells) {
+      const gx = Math.floor(key / 262144), gy = key - gx * 262144;
+      const x = (gx + 0.5) * COL, y = (gy + 0.5) * COL;
+      const list = buckets.get(Math.floor(x / CELL) * 65536 + Math.floor(y / CELL));
+      if (!list) continue;
+      interface Entry { z: number; t: number; fid: FaceId; pinned: boolean; b: [number, number, number] }
+      const entries: Entry[] = [];
+      for (const t of list) {
+        if (x < bbox[6 * t]! || x > bbox[6 * t + 1]! || y < bbox[6 * t + 2]! || y > bbox[6 * t + 3]!) continue;
+        const a = mesh.tris[3 * t]!, b = mesh.tris[3 * t + 1]!, c = mesh.tris[3 * t + 2]!;
+        const ax = pos[3 * a]!, ay = pos[3 * a + 1]!;
+        const bx2 = pos[3 * b]!, by2 = pos[3 * b + 1]!;
+        const cx2 = pos[3 * c]!, cy2 = pos[3 * c + 1]!;
+        const den = (by2 - cy2) * (ax - cx2) + (cx2 - bx2) * (ay - cy2);
+        if (Math.abs(den) < 1e-16) continue;
+        const w1 = ((by2 - cy2) * (x - cx2) + (cx2 - bx2) * (y - cy2)) / den;
+        const w2 = ((cy2 - ay) * (x - cx2) + (ax - cx2) * (y - cy2)) / den;
+        const w3 = 1 - w1 - w2;
+        if (w1 < -1e-6 || w2 < -1e-6 || w3 < -1e-6) continue;
+        // flat paper only — a turn's band stands on edge and has no place in a vertical pile
+        const ux = bx2 - ax, uy = by2 - ay, uz = pos[3 * b + 2]! - pos[3 * a + 2]!;
+        const vx = cx2 - ax, vy = cy2 - ay, vz = pos[3 * c + 2]! - pos[3 * a + 2]!;
+        const nx2 = uy * vz - uz * vy, ny2 = uz * vx - ux * vz, nz2 = ux * vy - uy * vx;
+        const nl = Math.hypot(nx2, ny2, nz2);
+        if (nl < 1e-18 || Math.abs(nz2) / nl < 0.4) continue;
+        entries.push({
+          z: w1 * pos[3 * a + 2]! + w2 * pos[3 * b + 2]! + w3 * pos[3 * c + 2]!,
+          t, fid: tris[t]!.fid!,
+          pinned: !!(settled[a] && settled[b] && settled[c]),
+          b: [w1, w2, w3],
+        });
+      }
+      if (entries.length < 2) continue;
+      entries.sort((p, q) => p.z - q.z);
+      const off: number[] = [0];
+      for (let i = 1; i < entries.length; i++) {
+        const gap = entries[i]!.fid === entries[i - 1]!.fid
+          || joined.has(entries[i]!.fid < entries[i - 1]!.fid
+            ? `${entries[i]!.fid}|${entries[i - 1]!.fid}` : `${entries[i - 1]!.fid}|${entries[i]!.fid}`)
+          ? 0 : MINSEP;
+        off.push(off[i - 1]! + gap);
+      }
+      const PIN = 1e6;
+      const poolV: number[] = [], poolW: number[] = [], poolN: number[] = [];
+      for (let i = 0; i < entries.length; i++) {
+        let v2 = entries[i]!.z - off[i]!, w2 = entries[i]!.pinned ? PIN : 1, n2 = 1;
+        while (poolV.length && poolV[poolV.length - 1]! > v2 + 1e-15) {
+          const pv = poolV.pop()!, pw = poolW.pop()!, pn = poolN.pop()!;
+          v2 = (v2 * w2 + pv * pw) / (w2 + pw); w2 += pw; n2 += pn;
+        }
+        poolV.push(v2); poolW.push(w2); poolN.push(n2);
+      }
+      let idx = 0;
+      for (let p = 0; p < poolV.length; p++) {
+        for (let r = 0; r < poolN[p]!; r++, idx++) {
+          const e2 = entries[idx]!;
+          const delta = poolV[p]! + off[idx]! - e2.z;
+          if (Math.abs(delta) < 1e-12) continue;
+          for (let k = 0; k < 3; k++) {
+            const v = mesh.tris[3 * e2.t + k]!;
+            if (settled[v]) continue;
+            colSum[v] += delta * e2.b[k]!;
+            colW[v] += e2.b[k]!;
+          }
+        }
+      }
+    }
+
+    if ((globalThis as { __untangleDebug?: boolean }).__untangleDebug) {
+      console.log(`  untangle round ${round}: pairs=${found} len=${(roundLen / eps).toFixed(2)}ε stick=${(stick / eps).toFixed(2)}ε cols=${colCells.size}`);
+    }
+    // keep the best configuration seen so far. Crossings rule: a round is only kept if it
+    // crosses no more than a whisker past what the layout started with — unsticking layers is
+    // not allowed to push paper through paper. Among the rounds that hold that line, the one
+    // with the least crossing-plus-stuckness wins.
+    if (round === 0) firstLen = roundLen;
+    const score = roundLen + stick;
+    if (roundLen <= firstLen + 2 * eps && score < bestLen) {
+      bestLen = score;
+      best = Float64Array.from(pos);
+    }
+    if (!found || round === ROUNDS) break;
+    region = nextRegion;
+    for (let v = 0; v < mesh.V; v++) {
+      const m = pushMag[v]!;
+      if (m > 0) {
+        // per-round step cap, and a lifetime budget per vertex — past that the walk is not
+        // converging there and stretching the paper further would show more than the crossing
+        // it chases (0.6ε keeps the crumple and rim contracts intact)
+        const cap = Math.min(step[v]!, Math.max(0, 0.6 * eps - spent[v]!));
+        if (cap > 0) {
+          let s2 = DAMP * (m > cap ? cap / m : 1);
+          s2 *= stretchOK(v, push[3 * v]! * s2, push[3 * v + 1]! * s2, push[3 * v + 2]! * s2);
+          if (s2 > 0) {
+            pos[3 * v] += push[3 * v]! * s2;
+            pos[3 * v + 1] += push[3 * v + 1]! * s2;
+            pos[3 * v + 2] += push[3 * v + 2]! * s2;
+            spent[v] += m * s2;
+            moved[v] = 1;
+          }
+        }
+      }
+      if (colW[v]! > 1e-9) {
+        let dz = DAMP * colSum[v]! / colW[v]!;
+        const cap = step[v]!;
+        if (dz > cap) dz = cap; else if (dz < -cap) dz = -cap;
+        const s3 = stretchOK(v, 0, 0, dz);
+        if (s3 > 0) {
+          pos[3 * v + 2] += dz * s3;
+          moved[v] = 1;
+        }
+      }
+    }
+    for (let t = 0; t < nTri; t++) {
+      if (!tris[t]!.still) continue;
+      const a = mesh.tris[3 * t]!, b = mesh.tris[3 * t + 1]!, c = mesh.tris[3 * t + 2]!;
+      tris[t]!.still = !(moved[a] || moved[b] || moved[c]) && tris[t]!.still;
+    }
+  }
+  // hand back the best configuration, and mark exactly the paper that ended up moved
+  if (best && bestLen < Infinity) pos.set(best);
+  for (let v = 0; v < mesh.V; v++) {
+    if (pos[3 * v] !== pos0[3 * v] || pos[3 * v + 1] !== pos0[3 * v + 1] || pos[3 * v + 2] !== pos0[3 * v + 2]) {
+      settled[v] = 0;
+    }
+  }
 }
 
 /**
  * The last fold, as motion. The movers swing about the hinge from 0 to π; whatever the turn and
  * the drape then do to settle them is blended in over the same interval, so t = 0 is exactly the
  * previous state's layout and t = 1 is exactly this one's.
+ *
+ * The swing is RIGID — one shared axis height for the whole moving pack, so its layers stay
+ * parallel and ε apart all the way round — and the pack ARCS OVER the pile: a lift of
+ * L·sin²(θ), zero WITH zero slope at both ends so take-off and landing stay the rotation's
+ * own, carries it clear while it travels. Without the lift two things cut: at take-off, the
+ * pack pivots about the fold line while the pile's rims BULGE at that same line, so the pack's
+ * crease band slices them; and near landing, any mover whose own height the rigid flip
+ * misjudges (the cup's front flap spans the 2-layer and the 4-layer pile at once, so one
+ * shared axis cannot land both parts) is dragged through the pile by the closing blend — which
+ * read as the colours shattering as the flap landed. L is sized to the worst of those two: the
+ * rims it must clear and the largest landing error. The lift also fades out over the first
+ * band of paper past the crease, so the forming fold is never sheared against its own hinge.
  */
 interface Motion { move: Uint8Array; ex: number; ey: number; ax: number; ay: number; h: number; sign: 1 | -1 }
 
@@ -821,6 +1523,7 @@ export function buildModel(state: FoldedState, opts: BuildOptions): Built {
 
   const faceOfCell = facesOfCells(state, mesh.cells);
   const built = layout(state, mesh, faceOfCell, eps);
+  untangle(mesh, faceOfCell, built.pos, built.settled, eps, built.z, built.joins);
   const q = built.pos;
 
   // ---- motion of the last fold, if there was one
@@ -829,8 +1532,19 @@ export function buildModel(state: FoldedState, opts: BuildOptions): Built {
   if (pre) {
     const preCells = facesOfCells(pre, mesh.cells);
     const lp = layout(pre, mesh, preCells, eps);
+    untangle(mesh, preCells, lp.pos, lp.settled, eps, lp.z, lp.joins);
     motion = motionOf(pre, state, mesh, preCells, faceOfCell, lp.z, built.z);
     if (motion) posPre = lp.pos;
+  }
+  // how high the swing has to arc: over the pile's rims, and over its own worst landing error
+  let lift = 0;
+  if (motion && posPre) {
+    let err = 0;
+    for (let v = 0; v < mesh.V; v++) {
+      if (!motion.move[v]) continue;
+      err = Math.max(err, Math.abs(q[3 * v + 2]! - (2 * motion.h - posPre[3 * v + 2]!)));
+    }
+    lift = err + 2 * eps;
   }
 
   // ---- geometry: one indexed mesh, triangles grouped by face so the dry-run can still tint
@@ -948,6 +1662,10 @@ export function buildModel(state: FoldedState, opts: BuildOptions): Built {
           [bx + ex * (s * c - zz * sn), by + ey * (s * c - zz * sn), h + zz * c + s * sn];
         [x, y, z] = rot(cos, sin);
         [ex1, ey1, ez1] = rot(Math.cos(Math.PI * motion.sign), Math.sin(Math.PI * motion.sign));
+        // arc over the pile — sin·|sin| dies off fast at both ends (take-off and landing are
+        // the rotation's own), carries the mountain/valley sign, and the ramp keeps the crease
+        // itself unlifted so the forming fold is not sheared against the paper it hinges on
+        z += lift * sin * Math.abs(sin) * smoothstep(Math.min(1, s / 0.08));
       }
       // whatever the join curves and the settle still owe is paid in over the same interval
       live[3 * v] = x + tt * (q[3 * v]! - ex1);

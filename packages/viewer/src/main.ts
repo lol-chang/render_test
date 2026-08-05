@@ -43,7 +43,10 @@ grid.position.z = -0.02;
 scene.add(grid);
 
 function makePerspective() {
-  const c = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.001, 100);
+  // near = 0.01, not 0.001: the paper skins separate hairline layer inversions with a small
+  // polygon offset (see paperMat), and a needlessly tight near plane makes perspective depth
+  // ulps so coarse at viewing distance that the offset would swallow a whole layer gap.
+  const c = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 100);
   return c;
 }
 function makeOrtho() {
