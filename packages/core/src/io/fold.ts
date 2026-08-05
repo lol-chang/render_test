@@ -11,7 +11,7 @@
  * cross-check our layer order against Flat-Folder / Origami Simulator output (§9.4).
  */
 import { FoldedState } from '../state/state.js';
-import { foldedPoly, faceIsFront } from '../state/face.js';
+import { foldedPoly } from '../state/face.js';
 import { signedArea } from '../geom/poly.js';
 import { applyIso } from '../geom/iso.js';
 import { FaceId } from '../state/ids.js';

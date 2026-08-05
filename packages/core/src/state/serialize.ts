@@ -9,7 +9,7 @@ import { Iso } from '../geom/iso.js';
 import { Poly } from '../geom/poly.js';
 import { Face, makeFace } from './face.js';
 import { CreaseRecord, PendingCrease, Assignment, segKey } from './edge.js';
-import { FaceId, asFaceId } from './ids.js';
+import { asFaceId } from './ids.js';
 import { FoldedState, buildState } from './state.js';
 
 interface VecJSON {

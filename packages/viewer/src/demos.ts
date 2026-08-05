@@ -1,8 +1,3 @@
-/**
- * Scripted demo models. Each demo is a list of engine states (one per step) so the
- * viewer can scrub through the fold history. All ops go through the real engine, so
- * what you see is a provably-valid state at every step.
- */
 import {
   Rat,
   initialSquare,
@@ -25,13 +20,10 @@ const precrease = (a: Vec2, b: Vec2, side: 'left' | 'right', dir: 'V' | 'M'): Op
   type: 'PRECREASE', axis: { a, b }, movingSide: side, direction: dir,
 });
 const unfold = (): Op => ({ type: 'UNFOLD_LAST' });
-const reverseFold = (a: Vec2, b: Vec2, side: 'left' | 'right', dir: 'V' | 'M'): Op => ({
-  type: 'INSIDE_REVERSE_FOLD', axis: { a, b }, movingSide: side, direction: dir,
-});
 
 export interface Demo {
   name: string;
-  labels: string[]; // description of the op that produced each step (step 0 = start)
+  labels: string[];
   states: FoldedState[];
 }
 
@@ -72,19 +64,17 @@ export function demos(): Demo[] {
       { label: 'FOLD ALL  x=½  (fold in half)', op: foldAll(V(R(1, 2), R(0)), V(R(1, 2), R(1)), 'right', 'V') },
       { label: 'FOLD ONE_LAYER  x=¼  (top flap only)', op: oneLayer(V(R(1, 4), R(0)), V(R(1, 4), R(1)), 'left', 'V') },
     ]),
-    // §8.1 v1.3 acceptance: the two-fold reference state (flap at x=¾, then top half down).
-    // Base sheet's top half is ONE facet: 2 layers over [0,½], 4 over [½,¾] → must ramp, not break.
+
     run('Two-fold (v1.3 ref)', [
       { label: 'FOLD ALL  x=¾  (right flap)', op: foldAll(V(R(3, 4), R(0)), V(R(3, 4), R(1)), 'right', 'V') },
       { label: 'FOLD ALL  y=½  (top half down)', op: foldAll(V(R(0), R(1, 2)), V(R(1), R(1, 2)), 'left', 'V') },
     ]),
-    // Golden #8 (§9.3): interior-anchored diagonal fold — house with two front flaps meeting at C=(½,½).
+
     run('Golden #8 (house)', [
       { label: 'FOLD ALL  (½,1)–(0,½)  top-left corner in, V', op: foldAll(V(R(1, 2), R(1)), V(R(0), R(1, 2)), 'right', 'V') },
       { label: 'FOLD ALL  (½,1)–(1,½)  top-right corner in, V', op: foldAll(V(R(1, 2), R(1)), V(R(1), R(1, 2)), 'left', 'V') },
     ]),
 
-    // ---- operation showcase (harder / less-common ops, all engine-verified) ----
     run('Mountain fold (behind)', [
       { label: 'FOLD ALL  x=½  (right, MOUNTAIN → behind)', op: foldAll(V(R(1, 2), R(0)), V(R(1, 2), R(1)), 'right', 'M') },
     ]),
@@ -113,12 +103,7 @@ export function demos(): Demo[] {
       { label: 'FOLD ALL  right ear', op: foldAll(V(R(1, 2), R(1, 2)), V(R(1), R(1)), 'right', 'V') },
       { label: 'FLIP', op: flip() },
     ]),
-    // Jumping frog. Precrease both midlines, fold all four corners to the centre C=(½,½)
-    // to reach the diamond preliminary base, then make the legs with INSIDE_REVERSE_FOLD —
-    // the reversed tip tucks BETWEEN existing layers (a plain fold cannot, that is P2), and
-    // the engine finds a checker-valid layer nesting. The diamond sits in folded space over
-    // y ∈ [−1, 0] (top ½,0 · bottom ½,−1 · sides 0,−½ and 1,−½), so the leg creases are
-    // given in those coordinates.
+
     run('Frog (base: house → sides to centre)', [
       { label: 'PRECREASE  x=½  (vertical)', op: precrease(V(R(1, 2), R(0)), V(R(1, 2), R(1)), 'right', 'V') },
       { label: 'PRECREASE  y=½  (horizontal)', op: precrease(V(R(0), R(1, 2)), V(R(1), R(1, 2)), 'left', 'V') },

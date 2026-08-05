@@ -8,7 +8,7 @@
  * hidden creases dashed. Numbers are rounded at the very last step for stable goldens.
  */
 import { FoldedState, Spot } from '../state/state.js';
-import { foldedPoly, faceIsFront } from '../state/face.js';
+import { faceIsFront } from '../state/face.js';
 import { Assignment } from '../state/edge.js';
 import { applyIso, isFront } from '../geom/iso.js';
 import { Vec2 } from '../geom/vec2.js';

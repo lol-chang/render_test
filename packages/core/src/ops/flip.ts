@@ -7,7 +7,6 @@
 import { Rat } from '../geom/rat.js';
 import { Line, lineThrough } from '../geom/line.js';
 import { reflectionIso, compose } from '../geom/iso.js';
-import { Vec2 } from '../geom/vec2.js';
 import { makeFace, foldedPoly } from '../state/face.js';
 import { FoldedState, buildState } from '../state/state.js';
 import { renormalizeToCONF } from './split.js';

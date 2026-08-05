@@ -7,7 +7,7 @@
  *   > 0  → left,  < 0 → right,  = 0 → on the line.
  */
 import { Rat } from './rat.js';
-import { Vec2, vec, sub, add, scale, dot, cross } from './vec2.js';
+import { Vec2, sub, add, scale, dot, cross } from './vec2.js';
 
 export interface Line {
   readonly a: Vec2;

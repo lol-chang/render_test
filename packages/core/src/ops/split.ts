@@ -9,7 +9,6 @@
 import { Line, lineThrough } from '../geom/line.js';
 import { Poly, splitPolyByLine, polysIdentical, polysInteriorDisjoint } from '../geom/poly.js';
 import { applyIso, invert } from '../geom/iso.js';
-import { Vec2 } from '../geom/vec2.js';
 import { Face, makeFace, foldedPoly } from '../state/face.js';
 import { FaceId, childFaceId } from '../state/ids.js';
 

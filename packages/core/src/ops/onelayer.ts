@@ -16,7 +16,7 @@
 import { Line, lineThrough, pointSideOfLine } from '../geom/line.js';
 import { applyIso } from '../geom/iso.js';
 import { Vec2 } from '../geom/vec2.js';
-import { Face, foldedPoly } from '../state/face.js';
+import { Face } from '../state/face.js';
 import { collinearOverlap } from '../state/edge.js';
 import { FaceId, EdgeId, asEdgeId, SpotId } from '../state/ids.js';
 import { segKey } from '../state/edge.js';

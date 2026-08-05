@@ -7,7 +7,7 @@
  * or merge polygons (spec §1.2 rule 4): splits are part of state identity.
  */
 import { Rat } from './rat.js';
-import { Vec2, sub, dot, cross, eq as vecEq, lexCmp } from './vec2.js';
+import { Vec2, sub, dot, eq as vecEq, lexCmp } from './vec2.js';
 import { Line, dir as lineDir, pointSideOfLine, segLineIntersect } from './line.js';
 
 export type Poly = readonly Vec2[]; // simple, CCW in source space, ≥ 3 vertices

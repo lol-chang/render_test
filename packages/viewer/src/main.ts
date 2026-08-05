@@ -1,14 +1,3 @@
-/**
- * Origami folding simulator — viewer entry point (spec §8).
- *
- * - one continuous sheet, deformed through the model's fold history (§8.1)
- * - fold animation: the same mesh with the last fold's angle run 0→π, so the final
- *   frame IS the verified post-state and nothing snaps (§8.2)
- * - interaction (§8.3): hover a face to inspect its stack; in the Interactive model,
- *   click a face, pick an EXACT candidate axis (enumerateAxisCandidates), and get a
- *   live green/red dry-run (movers green if valid, witness red if not) before applying.
- * - history strip of Π(S) thumbnails for time travel.
- */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
@@ -43,9 +32,6 @@ grid.position.z = -0.02;
 scene.add(grid);
 
 function makePerspective() {
-  // near = 0.01, not 0.001: the paper skins separate hairline layer inversions with a small
-  // polygon offset (see paperMat), and a needlessly tight near plane makes perspective depth
-  // ulps so coarse at viewing distance that the offset would swallow a whole layer gap.
   const c = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 100);
   return c;
 }
@@ -55,7 +41,6 @@ function makeOrtho() {
   return new THREE.OrthographicCamera(-h * aspect, h * aspect, h, -h, 0.001, 100);
 }
 
-// ---- state ----
 const demoList = demos();
 const userStates: FoldedState[] = [initialSquare()];
 const INTERACTIVE: Demo = { name: '🖐 Interactive (fold it yourself)', labels: ['unit square'], states: userStates };
@@ -64,25 +49,19 @@ const allDemos: Demo[] = [INTERACTIVE, ...demoList];
 let current: Demo = allDemos[0]!;
 let step = 0;
 let exploded = false;
-let topView = true; // spec §8.1: default orthographic top view (matches diagrams / Π(S))
+let topView = true;
 let currentObj: THREE.Object3D | null = null;
 let currentBuilt: Built | null = null;
 let modelCenter = new THREE.Vector3();
 let modelExtent = 1;
 let anim: { built: Built; t0: number; dur: number } | null = null;
 
-// interactive fold selections
 let selectedFace: FaceId | null = null;
 let candidates: AxisCandidate[] = [];
 let mode: 'ALL' | 'ONE_LAYER' = 'ALL';
 let direction: 'V' | 'M' = 'V';
 let side: 'left' | 'right' = 'left';
 
-// V(state; ε) — spec §8.1. ε, the layer gap, is the only shape parameter: a fold's turn radius
-// is half the gap for the innermost layer and grows by ε/2 per layer it wraps.
-// Explode spreads the stack: NOT a fixed multiple of ε, because a deep, narrow stack (8 layers
-// on a ⅛-wide strip) then stands taller than the paper is wide, which is not something one
-// sheet of paper can do. Spread it over about the model's smaller silhouette dimension instead.
 let epsilon = 0.006;
 function epsFor(state: FoldedState): number {
   if (!exploded) return epsilon;
@@ -95,16 +74,12 @@ function epsFor(state: FoldedState): number {
     lo = { x: Math.min(lo.x, x), y: Math.min(lo.y, y) };
     hi = { x: Math.max(hi.x, x), y: Math.max(hi.y, y) };
   }
-  // Bound the WHOLE stack, not just the gap. One sheet legitimately runs from level 0 to level
-  // 6 (the cup), so every layer of separation is a wall that sheet has to climb; spread them
-  // until the stack is as tall as the model is wide and the paper stops reading as paper at
-  // all. An eighth of the silhouette is enough to see the order and still see a folded sheet.
+
   const minDim = Math.max(1e-6, Math.min(hi.x - lo.x, hi.y - lo.y));
   return Math.max(epsilon, Math.min(0.03, minDim / depth, 0.12 / depth));
 }
 const isInteractive = () => current === INTERACTIVE;
 
-// ---- DOM ----
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const demoSel = $<HTMLSelectElement>('demo');
 const stepRange = $<HTMLInputElement>('step');
@@ -122,7 +97,6 @@ allDemos.forEach((d, i) => {
   o.value = String(i); o.textContent = d.name; demoSel.appendChild(o);
 });
 
-// ---- rendering ----
 function disposeObj(obj: THREE.Object3D) {
   obj.traverse((o) => {
     const m = o as THREE.Mesh;
@@ -137,8 +111,7 @@ function clearCurrent() {
 
 function showState(state: FoldedState, reframe = false) {
   clearCurrent();
-  // Explode = layer-order pedagogy: the layer gap is the ONLY thing it stretches, and the fold
-  // geometry follows it — the turns simply get wider, so the stack stays a stack of one sheet.
+
   const built = buildModel(state, { epsilon: epsFor(state) });
   scene.add(built.object);
   currentObj = built.object;
@@ -169,11 +142,6 @@ function frameCamera() {
   controls.update();
 }
 
-/**
- * Set emissive highlight on faces by id (others cleared). A sheet is one mesh with one
- * material per fragment (geometry groups), so the tint still lands on exactly the faces asked
- * for even though the paper is drawn as a single continuous surface.
- */
 function highlight(map: Map<string, number>) {
   currentObj?.traverse((o) => {
     const m = o as THREE.Mesh;
@@ -186,7 +154,6 @@ function highlight(map: Map<string, number>) {
 
 function frameState(): FoldedState { return current.states[step]!; }
 
-// ---- history strip ----
 function rebuildHistory() {
   historyEl.innerHTML = '';
   current.states.forEach((st, i) => {
@@ -199,7 +166,6 @@ function rebuildHistory() {
   });
 }
 
-// ---- navigation ----
 function goToStep(n: number, allowAnim: boolean) {
   n = Math.max(0, Math.min(current.states.length - 1, n));
   const forwardOne = n === step + 1;
@@ -210,8 +176,7 @@ function goToStep(n: number, allowAnim: boolean) {
   anim = null;
   showState(post);
   rebuildHistory();
-  // §8.2: a forward fold is the SAME mesh with the last fold's angle run 0 → π. The last frame
-  // is the committed model, so there is nothing to snap to when it finishes.
+
   if (allowAnim && forwardOne && currentBuilt?.animatable) {
     currentBuilt.setProgress(0);
     anim = { built: currentBuilt, t0: performance.now(), dur: 650 };
@@ -220,7 +185,7 @@ function goToStep(n: number, allowAnim: boolean) {
 }
 
 function selectDemo(i: number, stepOverride?: number) {
-  i = Number.isFinite(i) ? Math.max(0, Math.min(allDemos.length - 1, i)) : 0; // clamp bad hash
+  i = Number.isFinite(i) ? Math.max(0, Math.min(allDemos.length - 1, i)) : 0;
   anim = null; selectedFace = null;
   current = allDemos[i]!;
   const last = current.states.length - 1;
@@ -232,7 +197,6 @@ function selectDemo(i: number, stepOverride?: number) {
   rebuildHistory();
 }
 
-// ---- interactive fold ----
 function refreshFoldUI(state: FoldedState) {
   candidates = enumerateAxisCandidates(state).filter((c) => crossesModel(c, state));
   axisSel.innerHTML = '';
@@ -247,7 +211,6 @@ function refreshFoldUI(state: FoldedState) {
 }
 const num = (r: { toNumber(): number }) => Math.round(r.toNumber() * 100) / 100;
 
-/** Numeric filter: keep candidate axes that actually pass through the model interior. */
 function crossesModel(c: AxisCandidate, state: FoldedState): boolean {
   const ax = c.a.x.toNumber(), ay = c.a.y.toNumber();
   const dx = c.b.x.toNumber() - ax, dy = c.b.y.toNumber() - ay;
@@ -276,7 +239,6 @@ function dryRun() {
   if (!op) { foldstatus.textContent = ''; applyBtn.disabled = true; return; }
   const res = applyOp(state, op);
   if (res.ok) {
-    // highlight movers green
     const pr = planFold(state, op);
     const hl = new Map<string, number>();
     if ('plan' in pr) pr.plan.moverSet.forEach((id) => hl.set(id, 0x14532d));
@@ -304,13 +266,12 @@ function applyFold() {
   if (!op) return;
   const res = applyOp(state, op);
   if (!res.ok) return;
-  userStates.length = step + 1; // truncate any redo tail
+  userStates.length = step + 1;
   userStates.push(res.state);
   selectedFace = null;
   goToStep(step + 1, true);
 }
 
-// ---- picking ----
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 function pick(ev: PointerEvent): string | null {
@@ -320,7 +281,6 @@ function pick(ev: PointerEvent): string | null {
   if (!currentObj) return null;
   const hits = raycaster.intersectObject(currentObj, true);
   for (const h of hits) {
-    // one mesh per facet now, so the fragment (and thus the layer) comes from the triangle hit
     const ids = h.object.userData?.faceIds as string[] | undefined;
     const id = ids && h.faceIndex != null ? ids[h.faceIndex] : undefined;
     if (id) return id;
@@ -346,7 +306,6 @@ canvas.addEventListener('click', (ev) => {
   if (id) { selectedFace = id as FaceId; refreshFoldUI(frameState()); }
 });
 
-// ---- UI wiring ----
 demoSel.addEventListener('change', () => selectDemo(Number(demoSel.value)));
 stepRange.addEventListener('input', () => goToStep(Number(stepRange.value), false));
 $('prev').addEventListener('click', () => goToStep(step - 1, false));
@@ -355,7 +314,6 @@ $('topView').addEventListener('click', (e) => { topView = (e.target as HTMLButto
 $('explode').addEventListener('click', (e) => { exploded = (e.target as HTMLButtonElement).classList.toggle('active'); showState(frameState()); });
 axisSel.addEventListener('change', dryRun);
 
-// V(state; ε) slider + presets (§8.1 item 5)
 const epsRange = $<HTMLInputElement>('eps');
 const epsVal = $('epsVal');
 function syncEmbed() { epsVal.textContent = epsilon.toFixed(4); }
