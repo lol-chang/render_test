@@ -573,19 +573,43 @@ function joinsOf(state: FoldedState, eps: number, z: ReadonlyMap<FaceId, number>
       });
     }
   }
-  // Every turn is centred one OWN radius in from the fold line, so every rim — not just the
-  // widest one's — lands exactly on that line. The band has to be at least deep enough to hold
-  // the centre, and each crease caps it with its own paper; where the cap bites (a big layer gap
-  // in Explode) the turn is drawn at the reduced scale its own band can hold, as a narrow ribbon
-  // that stays inside the band instead of a loop swinging out past the fold line.
+  // Rims sharing a fold line are NESTED, physically: the widest turn on a fold line encloses
+  // every smaller turn there, so an inner rim's centre is set to the widest ENCLOSING turn's
+  // centre while its own radius stays its own. That draws each rim as a semicircle of its own
+  // Δz/2 sitting inside the outer rim, the way real paper folds — outer rim wraps the pile,
+  // inner rims curl inside it, and no rim's outer arc crosses another's. The cost is that inner
+  // rims stop `axis_encloser − axis_own` short of the fold line, so the outer rim reads as
+  // wrapping around the edge of the pile while inner folds tuck in behind — which is exactly
+  // how a folded edge looks. The alternative — every rim on its own radius so all lands on the
+  // fold line — lets inner rims poke through outer ones, and that shows as red back-face
+  // slivers where the paper should be one colour, which is what this build fixes.
+  const lineKey = (j: Join): string =>
+    `${rnd9(j.nx)},${rnd9(j.ny)},${rnd9(j.nx * j.ma.x + j.ny * j.ma.y)}`;
+  const byLine = new Map<string, Raw[]>();
+  for (const r of raws) {
+    if (r.e.kind !== 'hinge') continue;
+    const k = lineKey(r.e);
+    (byLine.get(k) ?? byLine.set(k, []).get(k)!).push(r);
+  }
   for (const r of raws) {
     if (r.e.kind !== 'hinge') continue;
     const R = (r.e.zHi - r.e.zLo) / 2;
-    const d = Math.min(Math.max(Math.PI * R / 2, R), JOIN_CAP, 0.3 * r.reach);
-    const scale = Math.min(1, R > 1e-12 ? d / R : 1);
+    // widest turn on the same line whose z-range CONTAINS this one's — the encloser
+    let Renc = R;
+    for (const s of byLine.get(lineKey(r.e)) ?? []) {
+      if (s === r || s.e.kind !== 'hinge') continue;
+      if (s.e.zLo <= r.e.zLo && s.e.zHi >= r.e.zHi) {
+        const Rs = (s.e.zHi - s.e.zLo) / 2;
+        if (Rs > Renc) Renc = Rs;
+      }
+    }
+    // Band width scales with the encloser (the mesh has to hold the outermost centre), not with
+    // this rim's own radius. Own bulge stays at own R so the curve is drawn true.
+    const d = Math.min(Math.max(Math.PI * Renc / 2, Renc), JOIN_CAP, 0.3 * r.reach);
+    const scaleEnc = Math.min(1, Renc > 1e-12 ? d / Renc : 1);
     r.e.delta = d;
-    r.e.bulge = R * scale;
-    r.e.axis = R * scale;
+    r.e.bulge = R * scaleEnc;
+    r.e.axis = Renc * scaleEnc;
     // material for the turn and for the flat run out to the plate, split by their lengths
     const flat = r.e.delta - r.e.axis;
     const round = Math.PI * r.e.bulge / 2;
