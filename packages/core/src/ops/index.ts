@@ -6,4 +6,6 @@ export * from './onelayer.js';
 export * from './flip.js';
 export * from './precrease.js';
 export * from './reverse.js';
+export * from './order.js';
+export * from './groups.js';
 export * from './apply.js';

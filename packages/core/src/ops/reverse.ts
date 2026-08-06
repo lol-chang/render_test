@@ -28,6 +28,7 @@ import { FoldedState, buildState } from '../state/state.js';
 import { checkState } from '../check/checker.js';
 import { splitAtAxis, renormalizeToCONF } from './split.js';
 import { faceSide, sideSign, recordHingeCreases } from './fold.js';
+import { candidateOrders, isTrivialOrder, ORDER_SEARCH_CAP } from './order.js';
 import { InsideReverseFoldOp, Result, ok, err } from './types.js';
 
 /**
@@ -38,40 +39,6 @@ import { InsideReverseFoldOp, Result, ok, err } from './types.js';
  * plain folds. Only if no block placement is accepted do we fall back to a bounded search
  * over general interleavings.
  */
-function* candidateOrders(statics: FaceId[], movers: FaceId[]): Generator<FaceId[]> {
-  const blocks = movers.length > 1 ? [movers, [...movers].reverse()] : [movers];
-  for (const block of blocks) {
-    for (let pos = 0; pos <= statics.length; pos++) {
-      yield [...statics.slice(0, pos), ...block, ...statics.slice(pos)];
-    }
-  }
-  // Fallback: general interleavings — but only when the fan-out is small. The count grows
-  // as C(n,k), so for deep states skip it (block placement already covers reverse folds).
-  if (statics.length + movers.length <= 12) yield* interleavings(statics, movers);
-}
-
-function* interleavings(a: FaceId[], b: FaceId[]): Generator<FaceId[]> {
-  if (a.length === 0) {
-    yield [...b];
-    return;
-  }
-  if (b.length === 0) {
-    yield [...a];
-    return;
-  }
-  for (const rest of interleavings(a.slice(1), b)) yield [a[0]!, ...rest];
-  for (const rest of interleavings(a, b.slice(1))) yield [b[0]!, ...rest];
-}
-
-/** True when the movers sit entirely at the top or entirely at the bottom (a plain fold). */
-function isTrivial(order: FaceId[], moverSet: ReadonlySet<FaceId>): boolean {
-  const idx = order.map((id, i) => (moverSet.has(id) ? i : -1)).filter((i) => i >= 0);
-  const k = idx.length;
-  const n = order.length;
-  const allTop = idx[0] === n - k;
-  const allBottom = idx[k - 1] === k - 1;
-  return allTop || allBottom;
-}
 
 export function insideReverseFold(state: FoldedState, op: InsideReverseFoldOp): Result {
   let axis: Line;
@@ -119,7 +86,7 @@ export function insideReverseFold(state: FoldedState, op: InsideReverseFoldOp): 
   let fallback: FoldedState | null = null;
   let iter = 0;
   for (const ord of candidateOrders(staticsF, moversF)) {
-    if (++iter > 4000) break;
+    if (++iter > ORDER_SEARCH_CAP) break;
     const next = buildState({
       faces: renorm.faces,
       order: ord,
@@ -131,7 +98,7 @@ export function insideReverseFold(state: FoldedState, op: InsideReverseFoldOp): 
     });
     const report = checkState(next);
     if (!report.ok) continue;
-    if (!isTrivial(ord, moverFinal)) return ok(next, report);
+    if (!isTrivialOrder(ord, moverFinal)) return ok(next, report);
     if (!fallback) fallback = next;
   }
   if (fallback) return ok(fallback, checkState(fallback));

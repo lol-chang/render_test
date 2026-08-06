@@ -12,6 +12,8 @@ import { FaceId } from '../state/ids.js';
 import { FoldedState, buildState } from '../state/state.js';
 import { splitAtAxis, renormalizeToCONF } from './split.js';
 import { checkState } from '../check/checker.js';
+import type { CheckReport } from '../check/types.js';
+import { candidateOrders, isMoverId, ORDER_SEARCH_CAP } from './order.js';
 import { FoldOp, MovingSide, OpError, Result, ok, err } from './types.js';
 
 /** Directed-axis side that a movingSide label selects: left = +1, right = -1. */
@@ -126,27 +128,40 @@ export function commitFold(args: {
   const moversInOrder = order.filter((id) => moverSet.has(id));
   const staticsInOrder = order.filter((id) => !moverSet.has(id));
   const revMovers = [...moversInOrder].reverse();
-  const newOrder: FaceId[] =
+  const ruleOrder: FaceId[] =
     direction === 'V'
       ? [...staticsInOrder, ...revMovers]
       : [...revMovers, ...staticsInOrder];
 
-  const renorm = renormalizeToCONF(movedFaces, newOrder);
-  const next = buildState({
-    faces: renorm.faces,
-    order: renorm.order,
-    creases: new Map(creases),
-    pendingCreases: state.pendingCreases,
-    step: state.step + 1,
-    prev: state,
-    lastOp: op,
-  });
-  const report = checkState(next);
-  if (!report.ok) {
-    const failed = report.results.find((r) => !r.pass)!;
-    return err({ code: 'E_INVARIANT', invariant: failed.invariant, witness: failed.witness });
+  const renorm = renormalizeToCONF(movedFaces, ruleOrder);
+  const isMover = (fid: FaceId): boolean => isMoverId(fid, moverSet);
+  const staticsF = renorm.order.filter((id) => !isMover(id));
+  const moversF = renorm.order.filter((id) => isMover(id));
+  const preferred = direction === 'V'
+    ? [...staticsF, ...moversF]
+    : [...moversF, ...staticsF];
+
+  let firstFail: CheckReport | null = null;
+  let iter = 0;
+  for (const ord of candidateOrders(staticsF, moversF, preferred)) {
+    if (++iter > ORDER_SEARCH_CAP) break;
+    const next = buildState({
+      faces: renorm.faces,
+      order: ord,
+      creases: new Map(creases),
+      pendingCreases: state.pendingCreases,
+      step: state.step + 1,
+      prev: state,
+      lastOp: op,
+    });
+    const report = checkState(next);
+    if (report.ok) return ok(next, report);
+    if (!firstFail) firstFail = report;
   }
-  return ok(next, report);
+  const failed = firstFail?.results.find((r) => !r.pass);
+  return failed
+    ? err({ code: 'E_INVARIANT', invariant: failed.invariant, witness: failed.witness })
+    : err({ code: 'E_UNSUPPORTED', detail: 'no valid layer order for this fold' });
 }
 
 /**
