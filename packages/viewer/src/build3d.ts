@@ -533,8 +533,14 @@ function layout(
     }
     const dz = j.zHi - j.zLo;
     const z0 = j.zLo + dz * beta / (1 + beta);
-    const s = smoothstep(Math.min(1, d / Math.max(j.arc, 1e-12)));
-    const zp = srcIsHi ? j.zLo + (z0 - j.zLo) * (1 - s) : z0 + (j.zHi - z0) * s;
+    const a = Math.max(j.arc, 1e-12);
+    const pLo = z0 - j.zLo, pHi = j.zHi - z0;
+    const p = srcIsHi ? pLo : pHi;
+    if (p <= 1e-12) return 0;
+    const g = 2 * (srcIsHi ? pHi : pLo) / Math.max(pLo + pHi, 1e-12);
+    const u = Math.min(1, d / a);
+    const f = g * u + (3 - 2 * g) * u * u + (g - 2) * u * u * u;
+    const zp = srcIsHi ? z0 - p * f : z0 + p * f;
     return srcIsHi
       ? (zp - j.zLo) / Math.max(j.zHi - zp, 1e-9)
       : (j.zHi - zp) / Math.max(zp - j.zLo, 1e-9);
