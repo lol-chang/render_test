@@ -26,7 +26,7 @@ export function unfoldLast(state: FoldedState, count: number): Result {
   return ok(s, checkState(s));
 }
 
-export function applyOp(state: FoldedState, op: Op): Result {
+function dispatch(state: FoldedState, op: Op): Result {
   switch (op.type) {
     case 'FOLD':
       if (op.mode === 'ALL') return foldAll(state, op);
@@ -39,5 +39,16 @@ export function applyOp(state: FoldedState, op: Op): Result {
       return unfoldLast(state, op.count ?? 1);
     case 'INSIDE_REVERSE_FOLD':
       return insideReverseFold(state, op);
+  }
+}
+
+export function applyOp(state: FoldedState, op: Op): Result {
+  try {
+    return dispatch(state, op);
+  } catch (e) {
+    return err({
+      code: 'E_UNSUPPORTED',
+      detail: `${op.type}: ${e instanceof Error ? e.message : String(e)}`,
+    });
   }
 }

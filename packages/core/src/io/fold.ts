@@ -14,6 +14,7 @@ import { FoldedState } from '../state/state.js';
 import { foldedPoly } from '../state/face.js';
 import { signedArea } from '../geom/poly.js';
 import { applyIso } from '../geom/iso.js';
+import { Vec2 } from '../geom/vec2.js';
 import { FaceId } from '../state/ids.js';
 
 export interface FoldJSON {
@@ -29,7 +30,6 @@ export interface FoldJSON {
 
 const PREC = 1e6;
 const q = (n: number): number => Math.round(n * PREC) / PREC;
-const vkey = (x: number, y: number): string => `${q(x)},${q(y)}`;
 
 export function toFold(state: FoldedState): FoldJSON {
   const faces = [...state.faces.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
@@ -38,13 +38,13 @@ export function toFold(state: FoldedState): FoldJSON {
 
   const vertices_coords: [number, number][] = [];
   const vIndex = new Map<string, number>();
-  const vidx = (x: number, y: number): number => {
-    const k = vkey(x, y);
+  const vidx = (p: Vec2): number => {
+    const k = `${p.x.toString()},${p.y.toString()}`;
     let i = vIndex.get(k);
     if (i === undefined) {
       i = vertices_coords.length;
       vIndex.set(k, i);
-      vertices_coords.push([q(x), q(y)]);
+      vertices_coords.push([q(p.x.toNumber()), q(p.y.toNumber())]);
     }
     return i;
   };
@@ -53,7 +53,7 @@ export function toFold(state: FoldedState): FoldJSON {
   const faces_vertices: number[][] = faces.map((f) => {
     let poly = foldedPoly(f);
     if (signedArea(poly).sign() < 0) poly = [...poly].reverse();
-    return poly.map((p) => vidx(p.x.toNumber(), p.y.toNumber()));
+    return poly.map((p) => vidx(p));
   });
 
   // edges from the derived edge set
@@ -64,8 +64,8 @@ export function toFold(state: FoldedState): FoldJSON {
     const fa = state.faces.get(e.faces[0])!;
     const a = applyIso(fa.T, e.srcSeg[0]);
     const b = applyIso(fa.T, e.srcSeg[1]);
-    const ia = vidx(a.x.toNumber(), a.y.toNumber());
-    const ib = vidx(b.x.toNumber(), b.y.toNumber());
+    const ia = vidx(a);
+    const ib = vidx(b);
     const key = ia < ib ? `${ia}-${ib}` : `${ib}-${ia}`;
     if (emittedEdge.has(key)) continue;
     emittedEdge.add(key);
@@ -133,15 +133,32 @@ export function foldStacks(fold: FoldJSON): Map<string, number[]> {
 
   const stacks = new Map<string, number[]>();
   for (const [k, members] of groups) {
-    // topological sort: bottom (fewest above-it constraints) first
     const set = new Set(members);
-    const sorted = [...members].sort((a, b) => {
-      // a below b if b is in the set of faces above a
-      if (ensure(a).has(b)) return -1; // b above a → a first (lower)
-      if (ensure(b).has(a)) return 1;
-      return a - b;
-    });
-    void set;
+    const indeg = new Map<number, number>();
+    const up = new Map<number, number[]>();
+    for (const m of members) { indeg.set(m, 0); up.set(m, []); }
+    for (const m of members) {
+      for (const a of ensure(m)) {
+        if (!set.has(a)) continue;
+        up.get(m)!.push(a);
+        indeg.set(a, (indeg.get(a) ?? 0) + 1);
+      }
+    }
+    const ready = members.filter((m) => (indeg.get(m) ?? 0) === 0).sort((a, b) => a - b);
+    const sorted: number[] = [];
+    while (ready.length) {
+      const m = ready.shift()!;
+      sorted.push(m);
+      for (const a of up.get(m)!) {
+        const d = (indeg.get(a) ?? 0) - 1;
+        indeg.set(a, d);
+        if (d === 0) {
+          ready.push(a);
+          ready.sort((p, q) => p - q);
+        }
+      }
+    }
+    for (const m of members) if (!sorted.includes(m)) sorted.push(m);
     stacks.set(k, sorted);
   }
   return stacks;

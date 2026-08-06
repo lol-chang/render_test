@@ -1279,9 +1279,11 @@ export function buildModel(state: FoldedState, opts: BuildOptions): Built {
     }
     posAttr.needsUpdate = true;
     geo.computeVertexNormals();
-    writeOverlay(solidGeo, solid, live);
-    writeOverlay(dashGeo, dashed, live);
-    lines.computeLineDistances(); dashLines.computeLineDistances();
+    if (solid.length) writeOverlay(solidGeo, solid, live);
+    if (dashed.length) {
+      writeOverlay(dashGeo, dashed, live);
+      dashLines.computeLineDistances();
+    }
   };
   publish();
 
@@ -1364,9 +1366,10 @@ function writeOverlay(geo: THREE.BufferGeometry, idx: readonly number[], q: Floa
   const attr = geo.getAttribute('position') as THREE.BufferAttribute | undefined;
   if (!attr) return;
   const arr = attr.array as Float32Array;
-  idx.forEach((v, i) => {
+  for (let i = 0; i < idx.length; i++) {
+    const v = idx[i]!;
     arr[3 * i] = q[3 * v]!; arr[3 * i + 1] = q[3 * v + 1]!; arr[3 * i + 2] = q[3 * v + 2]!;
-  });
+  }
   attr.needsUpdate = true;
   geo.computeBoundingSphere();
 }
