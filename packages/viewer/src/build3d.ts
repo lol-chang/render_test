@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+﻿import * as THREE from 'three';
 import type { FoldedState, Face, FaceId, Iso, Vec2 } from '@origami/core';
 import { compose, invert, isoEq } from '@origami/core';
 
@@ -9,6 +9,7 @@ const PENDING_COLOR = 0x2d6cdf;
 
 export interface BuildOptions {
   epsilon: number;
+  animate?: boolean;
 }
 
 export interface Built {
@@ -195,7 +196,7 @@ function tessellate(cells: P2[][], bends: [P2, P2][], fine: number): MeshData {
   const target = (x: number, y: number): number => {
     let d = Infinity;
     for (const s of bends) { const v = distSeg(x, y, s[0], s[1]); if (v < d) d = v; }
-    return Math.min(coarse, fine + 0.45 * d);
+    return Math.min(coarse, fine + 0.6 * d);
   };
   const midCache = new Map<number, number>();
   const mid = (i: number, j: number, cell: number): number => {
@@ -710,16 +711,26 @@ function untangle(
 
   const MINSEP = 0.35 * eps;
   const DAMP = 0.6;
-  const ROUNDS = 10;
-  const CELL = 0.02;
+  const ROUNDS = 5;
+  const CELL = 0.008;
   const nTri = mesh.triCell.length;
 
-  const joined = new Set<string>();
+  const idOf = new Map<FaceId, number>();
+  const faceIx = (id: FaceId): number => {
+    let i = idOf.get(id);
+    if (i === undefined) { i = idOf.size; idOf.set(id, i); }
+    return i;
+  };
+  for (const j of joins) { faceIx(j.lo); faceIx(j.hi); }
+  for (const c of faceOf) if (c) faceIx(c.id);
+  const NF = Math.max(1, idOf.size);
+  const joined = new Set<number>();
   for (const j of joins) {
-    joined.add(j.lo < j.hi ? `${j.lo}|${j.hi}` : `${j.hi}|${j.lo}`);
+    const a = faceIx(j.lo), b = faceIx(j.hi);
+    joined.add(Math.min(a, b) * NF + Math.max(a, b));
   }
 
-  interface Tri { ok: boolean; still: boolean; lvl: number; fid: FaceId | null }
+  interface Tri { ok: boolean; still: boolean; lvl: number; fix: number }
   const tris: Tri[] = new Array(nTri);
   for (let t = 0; t < nTri; t++) {
     const f = faceOf[mesh.triCell[t]!];
@@ -728,7 +739,7 @@ function untangle(
       ok: !!f,
       still: !!(settled[a] && settled[b] && settled[c]),
       lvl: f ? (z.get(f.id) ?? 0) : 0,
-      fid: f ? f.id : null,
+      fix: f ? faceIx(f.id) : -1,
     };
   }
 
@@ -768,6 +779,33 @@ function untangle(
     }
     return a2;
   };
+
+  const va = [0, 0, 0], vb = [0, 0, 0];
+  const pa: [number, number, number][] = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  const pb: [number, number, number][] = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  const nA: [number, number, number] = [0, 0, 0], nB: [number, number, number] = [0, 0, 0];
+  const dA = [0, 0, 0], dB = [0, 0, 0];
+  const unitNormal = (p: [number, number, number][], out: [number, number, number]): boolean => {
+    const ux = p[1]![0] - p[0]![0], uy = p[1]![1] - p[0]![1], uz = p[1]![2] - p[0]![2];
+    const wx = p[2]![0] - p[0]![0], wy = p[2]![1] - p[0]![1], wz = p[2]![2] - p[0]![2];
+    const x = uy * wz - uz * wy, y = uz * wx - ux * wz, zz = ux * wy - uy * wx;
+    const L = Math.hypot(x, y, zz);
+    if (L < 1e-18) return false;
+    out[0] = x / L; out[1] = y / L; out[2] = zz / L;
+    return true;
+  };
+  const planeDist = (
+    n: [number, number, number], o: [number, number, number],
+    p: [number, number, number][], out: number[],
+  ): void => {
+    for (let e = 0; e < 3; e++) {
+      out[e] = n[0] * (p[e]![0] - o[0]) + n[1] * (p[e]![1] - o[1]) + n[2] * (p[e]![2] - o[2]);
+    }
+  };
+  const allAbove = (d: number[], e: number): boolean => d[0]! > e && d[1]! > e && d[2]! > e;
+  const allBelow = (d: number[], e: number): boolean => d[0]! < -e && d[1]! < -e && d[2]! < -e;
+  const allNear = (d: number[], e: number): boolean =>
+    Math.abs(d[0]!) <= e && Math.abs(d[1]!) <= e && Math.abs(d[2]!) <= e;
 
   const bbox = new Float64Array(6 * nTri);
   const push = new Float64Array(3 * mesh.V);
@@ -813,48 +851,43 @@ function untangle(
     let found = 0, roundLen = 0, stick = 0;
     for (const [ck, list] of buckets) {
       const cgx = Math.floor(ck / 65536), cgy = ck - cgx * 65536;
+      list.sort((p, q) => bbox[6 * p + 4]! - bbox[6 * q + 4]!);
       for (let i = 0; i < list.length; i++) {
+        const zTop = bbox[6 * list[i]! + 5]! + MINSEP;
         for (let j = i + 1; j < list.length; j++) {
           const A = list[i]!, B = list[j]!;
+          if (bbox[6 * B + 4]! > zTop) break;
           if (tris[A]!.still && tris[B]!.still) continue;
           if (bbox[6 * A]! > bbox[6 * B + 1]! || bbox[6 * B]! > bbox[6 * A + 1]!) continue;
           if (bbox[6 * A + 2]! > bbox[6 * B + 3]! || bbox[6 * B + 2]! > bbox[6 * A + 3]!) continue;
-          if (bbox[6 * A + 4]! > bbox[6 * B + 5]! + MINSEP || bbox[6 * B + 4]! > bbox[6 * A + 5]! + MINSEP) continue;
 
           if (Math.floor(Math.max(bbox[6 * A]!, bbox[6 * B]!) / CELL) !== cgx) continue;
           if (Math.floor(Math.max(bbox[6 * A + 2]!, bbox[6 * B + 2]!) / CELL) !== cgy) continue;
-          const va = [mesh.tris[3 * A]!, mesh.tris[3 * A + 1]!, mesh.tris[3 * A + 2]!];
-          const vb = [mesh.tris[3 * B]!, mesh.tris[3 * B + 1]!, mesh.tris[3 * B + 2]!];
-          if (va.some((v) => vb.includes(v))) continue;
+          const va0 = mesh.tris[3 * A]!, va1 = mesh.tris[3 * A + 1]!, va2 = mesh.tris[3 * A + 2]!;
+          const vb0 = mesh.tris[3 * B]!, vb1 = mesh.tris[3 * B + 1]!, vb2 = mesh.tris[3 * B + 2]!;
+          if (va0 === vb0 || va0 === vb1 || va0 === vb2
+            || va1 === vb0 || va1 === vb1 || va1 === vb2
+            || va2 === vb0 || va2 === vb1 || va2 === vb2) continue;
 
-          const P = (v: number): [number, number, number] => [pos[3 * v]!, pos[3 * v + 1]!, pos[3 * v + 2]!];
-          const pa = va.map(P), pb = vb.map(P);
-          const nrm = (p: [number, number, number][]): [number, number, number] | null => {
-            const u = [p[1]![0] - p[0]![0], p[1]![1] - p[0]![1], p[1]![2] - p[0]![2]];
-            const w = [p[2]![0] - p[0]![0], p[2]![1] - p[0]![1], p[2]![2] - p[0]![2]];
-            const n: [number, number, number] = [
-              u[1]! * w[2]! - u[2]! * w[1]!, u[2]! * w[0]! - u[0]! * w[2]!, u[0]! * w[1]! - u[1]! * w[0]!,
-            ];
-            const L = Math.hypot(n[0], n[1], n[2]);
-            return L < 1e-18 ? null : [n[0] / L, n[1] / L, n[2] / L];
-          };
-          const nA = nrm(pa), nB = nrm(pb);
-          if (!nA || !nB) continue;
-          const dist = (n: [number, number, number], o: [number, number, number], p: [number, number, number][]): number[] =>
-            p.map((q) => n[0] * (q[0] - o[0]) + n[1] * (q[1] - o[1]) + n[2] * (q[2] - o[2]));
-          const dA = dist(nB, pb[0]!, pa);
-          const dB = dist(nA, pa[0]!, pb);
+          va[0] = va0; va[1] = va1; va[2] = va2;
+          vb[0] = vb0; vb[1] = vb1; vb[2] = vb2;
+          for (let e = 0; e < 3; e++) {
+            const p = va[e]!, q2 = vb[e]!;
+            pa[e]![0] = pos[3 * p]!; pa[e]![1] = pos[3 * p + 1]!; pa[e]![2] = pos[3 * p + 2]!;
+            pb[e]![0] = pos[3 * q2]!; pb[e]![1] = pos[3 * q2 + 1]!; pb[e]![2] = pos[3 * q2 + 2]!;
+          }
+          if (!unitNormal(pa, nA) || !unitNormal(pb, nB)) continue;
+          planeDist(nB, pb[0]!, pa, dA);
+          planeDist(nA, pa[0]!, pb, dB);
           const E = 1e-12;
           const flatA = Math.abs(nA[2]) > 0.4, flatB = Math.abs(nB[2]) > 0.4;
           const lvlGap = Math.abs(tris[A]!.lvl - tris[B]!.lvl) > 0.5 * eps;
-          const noCross =
-            dA.every((x) => x > E) || dA.every((x) => x < -E)
-            || dB.every((x) => x > E) || dB.every((x) => x < -E)
-            || dA.every((x) => Math.abs(x) <= E) || dB.every((x) => Math.abs(x) <= E);
+          const noCross = allAbove(dA, E) || allBelow(dA, E) || allAbove(dB, E) || allBelow(dB, E)
+            || allNear(dA, E) || allNear(dB, E);
           if (noCross) {
             if (!flatA || !flatB || !lvlGap) continue;
-            const fa2 = tris[A]!.fid!, fb2 = tris[B]!.fid!;
-            if (joined.has(fa2 < fb2 ? `${fa2}|${fb2}` : `${fb2}|${fa2}`)) continue;
+            const fa2 = tris[A]!.fix, fb2 = tris[B]!.fix;
+            if (joined.has(Math.min(fa2, fb2) * NF + Math.max(fa2, fb2))) continue;
             const inXY = (x: number, y: number, p: [number, number, number][]): boolean => {
               const den = (p[1]![1] - p[2]![1]) * (p[0]![0] - p[2]![0]) + (p[2]![0] - p[1]![0]) * (p[0]![1] - p[2]![1]);
               if (Math.abs(den) < 1e-16) return false;
@@ -956,7 +989,7 @@ function untangle(
       const x = (gx + 0.5) * COL, y = (gy + 0.5) * COL;
       const list = buckets.get(Math.floor(x / CELL) * 65536 + Math.floor(y / CELL));
       if (!list) continue;
-      interface Entry { z: number; t: number; fid: FaceId; pinned: boolean; b: [number, number, number] }
+      interface Entry { z: number; t: number; fix: number; pinned: boolean; b: [number, number, number] }
       const entries: Entry[] = [];
       for (const t of list) {
         if (x < bbox[6 * t]! || x > bbox[6 * t + 1]! || y < bbox[6 * t + 2]! || y > bbox[6 * t + 3]!) continue;
@@ -978,7 +1011,7 @@ function untangle(
         if (nl < 1e-18 || Math.abs(nz2) / nl < 0.4) continue;
         entries.push({
           z: w1 * pos[3 * a + 2]! + w2 * pos[3 * b + 2]! + w3 * pos[3 * c + 2]!,
-          t, fid: tris[t]!.fid!,
+          t, fix: tris[t]!.fix,
           pinned: !!(settled[a] && settled[b] && settled[c]),
           b: [w1, w2, w3],
         });
@@ -987,10 +1020,8 @@ function untangle(
       entries.sort((p, q) => p.z - q.z);
       const off: number[] = [0];
       for (let i = 1; i < entries.length; i++) {
-        const gap = entries[i]!.fid === entries[i - 1]!.fid
-          || joined.has(entries[i]!.fid < entries[i - 1]!.fid
-            ? `${entries[i]!.fid}|${entries[i - 1]!.fid}` : `${entries[i - 1]!.fid}|${entries[i]!.fid}`)
-          ? 0 : MINSEP;
+        const fi = entries[i]!.fix, fj = entries[i - 1]!.fix;
+        const gap = fi === fj || joined.has(Math.min(fi, fj) * NF + Math.max(fi, fj)) ? 0 : MINSEP;
         off.push(off[i - 1]! + gap);
       }
       const PIN = 1e6;
@@ -1031,6 +1062,7 @@ function untangle(
     }
     if (!found || round === ROUNDS) break;
     region = nextRegion;
+    let stirred = false;
     for (let v = 0; v < mesh.V; v++) {
       const m = pushMag[v]!;
       if (m > 0) {
@@ -1044,6 +1076,7 @@ function untangle(
             pos[3 * v + 2] += push[3 * v + 2]! * s2;
             spent[v] += m * s2;
             moved[v] = 1;
+            stirred = true;
           }
         }
       }
@@ -1052,12 +1085,14 @@ function untangle(
         const cap = step[v]!;
         if (dz > cap) dz = cap; else if (dz < -cap) dz = -cap;
         const s3 = stretchOK(v, 0, 0, dz);
-        if (s3 > 0) {
+        if (s3 > 0 && Math.abs(dz * s3) > 1e-15) {
           pos[3 * v + 2] += dz * s3;
           moved[v] = 1;
+          stirred = true;
         }
       }
     }
+    if (!stirred) break;
     for (let t = 0; t < nTri; t++) {
       if (!tris[t]!.still) continue;
       const a = mesh.tris[3 * t]!, b = mesh.tris[3 * t + 1]!, c = mesh.tris[3 * t + 2]!;
@@ -1131,16 +1166,28 @@ function paperMat(color: number, side: THREE.Side): THREE.MeshStandardMaterial {
 
 export function buildModel(state: FoldedState, opts: BuildOptions): Built {
   const eps = Math.max(1e-5, opts.epsilon);
-  const pre = state.prev;
+  const pre = opts.animate === false ? undefined : state.prev;
   const states = pre ? [state, pre] : [state];
+
+  const T = (globalThis as { __t?: Record<string, number> }).__t;
+  const tick = (k: string, t0: number): number => {
+    if (T) T[k] = (T[k] ?? 0) + performance.now() - t0;
+    return performance.now();
+  };
+  let tk = performance.now();
 
   const fine = Math.min(0.01, Math.max(0.0012, eps * 0.5 * Math.PI / 4));
   const cells = arrangement(states);
+  tk = tick('arrange', tk);
   const mesh = tessellate(cells, bendSegs(states), fine);
+  tk = tick('tess', tk);
 
   const faceOfCell = facesOfCells(state, mesh.cells);
+  tk = tick('faces', tk);
   const built = layout(state, mesh, faceOfCell, eps);
+  tk = tick('layout', tk);
   untangle(mesh, faceOfCell, built.pos, built.settled, eps, built.z, built.joins);
+  tk = tick('untangle', tk);
   const q = built.pos;
 
   let motion: Motion | null = null;
@@ -1148,7 +1195,9 @@ export function buildModel(state: FoldedState, opts: BuildOptions): Built {
   if (pre) {
     const preCells = facesOfCells(pre, mesh.cells);
     const lp = layout(pre, mesh, preCells, eps);
+    tk = tick('layout', tk);
     untangle(mesh, preCells, lp.pos, lp.settled, eps, lp.z, lp.joins);
+    tk = tick('untangle', tk);
     motion = motionOf(state, mesh, preCells, faceOfCell, lp.z, built.z);
     if (motion) posPre = lp.pos;
   }

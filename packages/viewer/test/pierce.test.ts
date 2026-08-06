@@ -1,16 +1,3 @@
-/**
- * NO LAYER IS DRAWN THROUGH ANOTHER. A layer poking through the one over it shows on screen as
- * the wrong colour striped across the paper — the one defect a viewer cannot un-see — and two
- * surfaces crossing is exactly a mesh self-intersection. So this hunts intersecting triangle
- * pairs (excluding pairs that share a vertex: in this one-surface mesh, legitimate contact is
- * always through shared vertices) and bounds their total crossing length.
- *
- * The bound is zero for most demos. What residue remains sits in CORNER KNOTS: material corners
- * where several fold lines meet (the cup's rim corners, the frog's centre), where layers at
- * every level converge within a band width and the blended fields genuinely have no room. Those
- * crossings are a couple of gaps across and sit inside the pile. The budgets below are the
- * measured residue with headroom — they are ratchets, meant to be lowered, never raised.
- */
 import { describe, expect, it } from 'vitest';
 import type * as THREE from 'three';
 import { buildModel, type BuildOptions } from '../src/build3d.js';
@@ -19,7 +6,6 @@ import type { FoldedState } from '@origami/core';
 
 const PAPER: BuildOptions = { epsilon: 0.006 };
 
-/** Accepted corner-knot residue, in ε of total crossing length. Everything else must be clean. */
 const BUDGET: Record<string, number> = {
   'Traditional cup': 85,
   'Rabbit-ish (band + ears + flip)': 2,
@@ -46,7 +32,6 @@ function sheetOf(state: FoldedState, opts: BuildOptions): Sheet {
 
 type V3 = [number, number, number];
 
-/** Signed distances of t's vertices to the plane of (a,b,c), and that plane's unit normal. */
 function planeDists(a: V3, b: V3, c: V3, t: V3[]): { n: V3; d: number[] } {
   const u: V3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
   const v: V3 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
@@ -57,10 +42,6 @@ function planeDists(a: V3, b: V3, c: V3, t: V3[]): { n: V3; d: number[] } {
   return { n, d: t.map((p) => n[0] * p[0] + n[1] * p[1] + n[2] * p[2] - off) };
 }
 
-/**
- * Length of the intersection segment of two triangles, 0 if they do not cross. Near-coplanar
- * pairs return 0 — layers drawn a gap apart are never coplanar unless they already touch.
- */
 function triTriCross(t1: V3[], t2: V3[], eps: number): number {
   const { d: d1 } = planeDists(t2[0]!, t2[1]!, t2[2]!, t1);
   if (d1.every((x) => x > eps) || d1.every((x) => x < -eps)) return 0;
@@ -108,8 +89,6 @@ describe('no layer is drawn through another', () => {
       const state = demo.states[demo.states.length - 1]!;
       const s = sheetOf(state, PAPER);
 
-      // spatial hash over drawn xy; each candidate pair is handled once, in the grid cell that
-      // holds the low corner of its bbox overlap
       const CELL = 0.02;
       const buckets = new Map<string, number[]>();
       const bbox: { x0: number; x1: number; y0: number; y1: number; z0: number; z1: number }[] = [];

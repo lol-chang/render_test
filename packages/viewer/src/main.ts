@@ -106,13 +106,14 @@ function disposeObj(obj: THREE.Object3D) {
   });
 }
 function clearCurrent() {
+  anim = null;
   if (currentObj) { scene.remove(currentObj); disposeObj(currentObj); currentObj = null; currentBuilt = null; }
 }
 
-function showState(state: FoldedState, reframe = false) {
+function showState(state: FoldedState, reframe = false, animate = false) {
   clearCurrent();
 
-  const built = buildModel(state, { epsilon: epsFor(state) });
+  const built = buildModel(state, { epsilon: epsFor(state), animate });
   scene.add(built.object);
   currentObj = built.object;
   currentBuilt = built;
@@ -154,7 +155,17 @@ function highlight(map: Map<string, number>) {
 
 function frameState(): FoldedState { return current.states[step]!; }
 
+let historyOf: Demo | null = null;
+let historyLen = 0;
+
 function rebuildHistory() {
+  if (historyOf === current && historyLen === current.states.length) {
+    const kids = historyEl.children;
+    for (let i = 0; i < kids.length; i++) {
+      kids[i]!.className = 'thumb' + (i === step ? ' active' : '');
+    }
+    return;
+  }
   historyEl.innerHTML = '';
   current.states.forEach((st, i) => {
     const img = document.createElement('img');
@@ -164,6 +175,8 @@ function rebuildHistory() {
     img.addEventListener('click', () => goToStep(i, false));
     historyEl.appendChild(img);
   });
+  historyOf = current;
+  historyLen = current.states.length;
 }
 
 function goToStep(n: number, allowAnim: boolean) {
@@ -174,7 +187,7 @@ function goToStep(n: number, allowAnim: boolean) {
   step = n; stepRange.value = String(step);
   void pre;
   anim = null;
-  showState(post);
+  showState(post, false, allowAnim && forwardOne);
   rebuildHistory();
 
   if (allowAnim && forwardOne && currentBuilt?.animatable) {

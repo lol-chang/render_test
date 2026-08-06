@@ -1,21 +1,3 @@
-/**
- * A DRAPE FALLS IN ONE MOTION.
- *
- * Where a sheet crosses the edge of the pile beneath it, the paper leaves the upper plate,
- * bends once, and settles onto the lower one. Its cross section is therefore a single S: flat
- * where it meets each plate, steepest somewhere in between, and never flat again in the middle.
- *
- * Getting that wrong does not break any of the other contracts — the plates stay exact, no
- * layer crosses another, nothing hangs past the outline — but it is the defect a viewer sees.
- * An earlier build gave each half of the drape its own profile, flat at the plate AND flat at
- * the split line; a skewed drape then came out as a TERRACE, a shelf at the fold with a cliff
- * beside it, and the eye reads a terrace on a folded sheet as a wrinkle. The two halves are
- * joined with a shared slope now (see `stepW`), so the fall is one curve.
- *
- * The test walks the drawn top surface across each split and demands the slope rise to one peak
- * and fall away — no interior slack. Measured on the terraced build the cup's worst drape
- * slackened to 0.03 of its peak in the middle; it now holds above 0.5.
- */
 import { describe, expect, it } from 'vitest';
 import type * as THREE from 'three';
 import { buildModel, type BuildOptions } from '../src/build3d.js';
@@ -42,7 +24,6 @@ function surfaceOf(state: FoldedState, opts: BuildOptions): Surface {
   };
 }
 
-/** Height of the highest paper over (x, y), or null if the model does not cover it. */
 function topAt(s: Surface, x: number, y: number): number | null {
   let top = -Infinity;
   for (let t = 0; t < s.tris; t++) {
@@ -70,7 +51,7 @@ describe('a drape falls in one motion', () => {
       const level = new Map<FaceId, number>();
       for (const sp of state.spots.values()) sp.stack.forEach((id, i) => level.set(id, i * PAPER.epsilon));
 
-      const REACH = 0.05;      // past the widest band a drape may claim
+      const REACH = 0.05;
       const N = 40;
       const slack: string[] = [];
       for (const e of state.edges.values()) {
@@ -89,8 +70,6 @@ describe('a drape falls in one motion', () => {
         if (len < 1e-9) continue;
         const nx = -(B.y - A.y) / len, ny = (B.x - A.x) / len;
 
-        // sample where the split is RUNNING: its ends meet other folds, and the profile there
-        // belongs to the junction, not to this drape
         for (const frac of [0.4, 0.5, 0.6]) {
           const mx = A.x + (B.x - A.x) * frac, my = A.y + (B.y - A.y) * frac;
           const z: number[] = [];
@@ -102,11 +81,8 @@ describe('a drape falls in one motion', () => {
           }
           if (!ok) continue;
           const drop = Math.abs(z[z.length - 1]! - z[0]!);
-          if (drop < 1.5 * PAPER.epsilon) continue;      // too shallow to judge
-          // ONE motion means the fall speeds up to a single peak and slows again — the slope
-          // profile is unimodal. A terrace shows as a SECOND hump: walking away from the peak,
-          // the fall slackens into the shelf and then picks up again. How far it picks back up
-          // is the defect's size, so that is what is measured.
+          if (drop < 1.5 * PAPER.epsilon) continue;
+
           const sign = Math.sign(z[z.length - 1]! - z[0]!);
           const rise = z.slice(1).map((v, i) => (v - z[i]!) * sign);
           const peak = Math.max(...rise);
