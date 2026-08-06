@@ -33,6 +33,15 @@
       #foldui { margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.08); display: none; }
       #foldui.on { display: block; }
       #foldstatus { margin-top: 8px; font-size: 12px; white-space: pre-line; min-height: 32px; }
+      #groups { display: none; margin-top: 8px; }
+      #groups.on { display: block; }
+      #groups .grp { display: block; width: 100%; text-align: left; margin-top: 5px; padding: 7px 9px; font-size: 12px; line-height: 1.35; }
+      #groups .grp.sel { background: #2d6cdf; border-color: #2d6cdf; }
+      #groups .grp:disabled { opacity: 0.65; }
+      #groups .grp .tag { display: block; font-size: 11px; color: #9aa1ac; }
+      #groups .grp.sel .tag { color: #dbe6fb; }
+      #groups .grp .why { display: block; font-size: 11px; color: #f87171; }
+      #groups .none { font-size: 12px; color: #9aa1ac; }
       .ok { color: #4ade80; } .bad { color: #f87171; }
       #history { position: fixed; bottom: 10px; left: 12px; right: 12px; height: 74px; display: flex; gap: 6px; overflow-x: auto; padding: 4px; }
       #history .thumb { height: 64px; width: 64px; flex: 0 0 auto; border-radius: 8px; border: 2px solid transparent; background: #fff; cursor: pointer; }
@@ -70,19 +79,20 @@
 
       <div id="foldui">
         <label>Interactive fold — click a face, pick an axis</label>
-        <div id="selinfo" style="font-size:12px;color:#aab2be">no face selected</div>
+        <div id="selinfo" style="font-size:12px;color:#aab2be">every layer on the moving side folds together</div>
         <label for="axis">Axis candidate</label>
         <select id="axis"></select>
-        <div class="btnrow">
-          <button id="mAll" class="active">All layers</button>
-          <button id="mOne">One layer</button>
-        </div>
         <div class="btnrow">
           <button id="dV" class="active">Valley</button>
           <button id="dM">Mountain</button>
           <button id="sL" class="active">Left moves</button>
           <button id="sR">Right moves</button>
         </div>
+        <div class="btnrow">
+          <button id="mAll" class="active">All layers</button>
+          <button id="mOne">Choose layers</button>
+        </div>
+        <div id="groups"></div>
         <div id="foldstatus"></div>
         <button id="apply" class="apply" disabled>Apply fold</button>
       </div>

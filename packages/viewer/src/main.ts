@@ -2,11 +2,13 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   checkState, applyOp, planFold, initialSquare, enumerateAxisCandidates, renderSVG, foldedPoly,
-  type FoldedState, type FoldOp, type AxisCandidate, type FaceId, type Face,
+  foldGroups,
+  type FoldedState, type FoldOp, type AxisCandidate, type FaceId, type Face, type FoldGroup,
 } from '@origami/core';
 import { demos, type Demo } from './demos.js';
 import { buildModel, type Built } from './build3d.js';
 import { easeInOut } from './animate.js';
+import { describeGroup, groupKeyOf, pickGroup, reasonText } from './groupui.js';
 
 const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -58,6 +60,9 @@ let anim: { built: Built; t0: number; dur: number } | null = null;
 
 let selectedFace: FaceId | null = null;
 let candidates: AxisCandidate[] = [];
+let groups: readonly FoldGroup[] = [];
+let groupIdx = -1;
+let groupKey: string | null = null;
 let mode: 'ALL' | 'ONE_LAYER' = 'ALL';
 let direction: 'V' | 'M' = 'V';
 let side: 'left' | 'right' = 'left';
@@ -88,6 +93,7 @@ const info = $('info');
 const foldui = $('foldui');
 const selinfo = $('selinfo');
 const axisSel = $<HTMLSelectElement>('axis');
+const groupsEl = $('groups');
 const foldstatus = $('foldstatus');
 const applyBtn = $<HTMLButtonElement>('apply');
 const historyEl = $('history');
@@ -199,7 +205,7 @@ function goToStep(n: number, allowAnim: boolean) {
 
 function selectDemo(i: number, stepOverride?: number) {
   i = Number.isFinite(i) ? Math.max(0, Math.min(allDemos.length - 1, i)) : 0;
-  anim = null; selectedFace = null;
+  anim = null; selectedFace = null; groupKey = null;
   current = allDemos[i]!;
   const last = current.states.length - 1;
   step = stepOverride === undefined || stepOverride < 0 ? last : Math.min(last, stepOverride);
@@ -219,10 +225,62 @@ function refreshFoldUI(state: FoldedState) {
     o.textContent = `${c.kind}: (${num(c.a.x)},${num(c.a.y)})–(${num(c.b.x)},${num(c.b.y)})`;
     axisSel.appendChild(o);
   });
-  selinfo.textContent = selectedFace ? `seed face: ${selectedFace}` : 'no face selected (needed for One-layer)';
-  dryRun();
+  refreshGroups();
 }
 const num = (r: { toNumber(): number }) => Math.round(r.toNumber() * 100) / 100;
+
+function refreshGroups() {
+  if (!isInteractive()) return;
+  const state = frameState();
+  const c = candidates[Number(axisSel.value)];
+  const choosing = mode === 'ONE_LAYER';
+
+  groups = choosing && c
+    ? foldGroups(state, { a: c.a, b: c.b }, side, direction).groups
+    : [];
+  groupIdx = pickGroup(groups, groupKey, selectedFace);
+
+  groupsEl.classList.toggle('on', choosing);
+  groupsEl.innerHTML = '';
+  if (choosing) {
+    if (groups.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'none';
+      empty.textContent = c ? 'this axis lifts no layers' : 'pick an axis first';
+      groupsEl.appendChild(empty);
+    }
+    groups.forEach((g, i) => {
+      const view = describeGroup(g, direction);
+      const btn = document.createElement('button');
+      btn.className = 'grp' + (i === groupIdx ? ' sel' : '');
+      btn.disabled = !g.foldable;
+      const title = document.createElement('b');
+      title.textContent = view.title;
+      const note = document.createElement('span');
+      note.className = 'tag';
+      note.textContent = view.note;
+      btn.append(title, note);
+      if (view.why) {
+        const why = document.createElement('span');
+        why.className = 'why';
+        why.textContent = view.why;
+        btn.appendChild(why);
+      }
+      btn.addEventListener('click', () => {
+        groupKey = groupKeyOf(g);
+        selectedFace = null;
+        refreshGroups();
+      });
+      groupsEl.appendChild(btn);
+    });
+  }
+
+  if (!choosing) selinfo.textContent = 'every layer on the moving side folds together';
+  else if (selectedFace) selinfo.textContent = `from face ${selectedFace}`;
+  else selinfo.textContent = 'click a face, or pick a layer set below';
+
+  dryRun();
+}
 
 function crossesModel(c: AxisCandidate, state: FoldedState): boolean {
   const ax = c.a.x.toNumber(), ay = c.a.y.toNumber();
@@ -241,7 +299,10 @@ function currentOp(): FoldOp | null {
   const c = candidates[Number(axisSel.value)];
   if (!c) return null;
   const base: FoldOp = { type: 'FOLD', mode, axis: { a: c.a, b: c.b }, movingSide: side, direction };
-  if (mode === 'ONE_LAYER' && selectedFace) return { ...base, seedFaceIds: [selectedFace] };
+  if (mode !== 'ONE_LAYER') return base;
+  const g = groups[groupIdx];
+  if (g) return { ...base, seedFaceIds: [...g.faces] };
+  if (selectedFace) return { ...base, seedFaceIds: [selectedFace] };
   return base;
 }
 
@@ -263,14 +324,9 @@ function dryRun() {
     const hl = new Map<string, number>();
     if (e.code === 'E_BLOCKED') e.pair.forEach((id) => hl.set(id, 0x7f1d1d));
     highlight(hl);
-    foldstatus.innerHTML = `<span class="bad">✗ ${e.code}</span>\n${witnessText(e)}`;
+    foldstatus.innerHTML = `<span class="bad">✗ ${e.code}</span>\n${reasonText(e)}`;
     applyBtn.disabled = true;
   }
-}
-function witnessText(e: { code: string } & Record<string, unknown>): string {
-  if (e.code === 'E_BLOCKED') return `blocked by layer order: ${(e.pair as string[]).join(' vs ')}`;
-  if (e.code === 'E_TEAR') return `would tear (${(e.edges as string[]).length} edge(s))`;
-  return '';
 }
 
 function applyFold() {
@@ -282,6 +338,7 @@ function applyFold() {
   userStates.length = step + 1;
   userStates.push(res.state);
   selectedFace = null;
+  groupKey = null;
   goToStep(step + 1, true);
 }
 
@@ -316,7 +373,7 @@ canvas.addEventListener('pointermove', (ev) => {
 canvas.addEventListener('click', (ev) => {
   if (!isInteractive()) return;
   const id = pick(ev);
-  if (id) { selectedFace = id as FaceId; refreshFoldUI(frameState()); }
+  if (id) { selectedFace = id as FaceId; groupKey = null; refreshGroups(); }
 });
 
 demoSel.addEventListener('change', () => selectDemo(Number(demoSel.value)));
@@ -325,7 +382,7 @@ $('prev').addEventListener('click', () => goToStep(step - 1, false));
 $('next').addEventListener('click', () => goToStep(step + 1, true));
 $('topView').addEventListener('click', (e) => { topView = (e.target as HTMLButtonElement).classList.toggle('active'); frameCamera(); });
 $('explode').addEventListener('click', (e) => { exploded = (e.target as HTMLButtonElement).classList.toggle('active'); showState(frameState()); });
-axisSel.addEventListener('change', dryRun);
+axisSel.addEventListener('change', () => { groupKey = null; refreshGroups(); });
 
 const epsRange = $<HTMLInputElement>('eps');
 const epsVal = $('epsVal');
@@ -340,7 +397,8 @@ function applyPreset(paper: boolean) {
 $('presetPaper').addEventListener('click', () => applyPreset(true));
 $('presetExplode').addEventListener('click', () => applyPreset(false));
 const toggle = (id: string, other: string, set: () => void) => $(id).addEventListener('click', () => {
-  $(id).classList.add('active'); $(other).classList.remove('active'); set(); dryRun();
+  $(id).classList.add('active'); $(other).classList.remove('active'); set();
+  groupKey = null; refreshGroups();
 });
 toggle('mAll', 'mOne', () => (mode = 'ALL'));
 toggle('mOne', 'mAll', () => (mode = 'ONE_LAYER'));
