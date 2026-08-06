@@ -55,6 +55,11 @@ export function demos(): Demo[] {
       { label: 'FOLD ALL  x=¼  (right, valley)', op: foldAll(V(R(1, 4), R(0)), V(R(1, 4), R(1)), 'right', 'V') },
       { label: 'FOLD ALL  x=⅛  (right, valley)', op: foldAll(V(R(1, 8), R(0)), V(R(1, 8), R(1)), 'right', 'V') },
     ]),
+    run('Rolling fold 2 (rolls the other way)', [
+      { label: 'FOLD ALL  x=½  (right, valley)', op: foldAll(V(R(1, 2), R(0)), V(R(1, 2), R(1)), 'right', 'V') },
+      { label: 'FOLD ALL  x=¼  (left → right, valley)', op: foldAll(V(R(1, 4), R(0)), V(R(1, 4), R(1)), 'left', 'V') },
+      { label: 'FOLD ALL  x=⅜  (left → right, valley)', op: foldAll(V(R(3, 8), R(0)), V(R(3, 8), R(1)), 'left', 'V') },
+    ]),
     run('Traditional cup', [
       { label: 'FOLD ALL  diagonal  (triangle)', op: foldAll(V(R(0), R(0)), V(R(1), R(1)), 'right', 'V') },
       { label: 'FOLD ALL  corner fold', op: foldAll(V(R(0), R(1, 2)), V(R(1, 2), R(1)), 'left', 'V') },
